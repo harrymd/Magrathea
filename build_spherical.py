@@ -90,14 +90,14 @@ def get_real_points(mesh):
     return pts, tri_new, i_mapping
 
 # Building the mesh. ----------------------------------------------------------
-def make_spherical_poly_file_wrapper(dir_output, dir_input, tet_max_vol, r_icb, r_cmb, r_srf, name):
+def make_spherical_poly_file_wrapper(dir_output, dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
     #mesh_size = 3.0*mesh_size
 
     # Set output file for mesh points. 
-    subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
     #
     out_path_pts_cmb = os.path.join(subdir_out, 'pts_cmb.npy')
     out_path_tri_cmb = os.path.join(subdir_out, 'tri_cmb.npy')
@@ -144,10 +144,10 @@ def make_spherical_poly_file_wrapper(dir_output, dir_input, tet_max_vol, r_icb, 
 
         pts_cmb, tri_cmb,                                           \
         i_pts_inside_llsvp_on_cmb, i_pts_boundary_llsvp_on_cmb  =   \
-                build_cmb_sphere(dir_output, dir_input, r_cmb, mesh_size)
+                build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size)
 
-        pts_srf, tri_srf = build_sphere(dir_output, r_srf, mesh_size, 'srf')
-        pts_icb, tri_icb = build_sphere(dir_output, r_icb, mesh_size, 'icb')
+        pts_srf, tri_srf = build_sphere(subdir_out, r_srf, mesh_size, 'srf')
+        pts_icb, tri_icb = build_sphere(subdir_out, r_icb, mesh_size, 'icb')
 
     # Add the points defining the top surface of the LLSVP.
     # These are simply copies of the points in the bottom surface of the
@@ -276,7 +276,7 @@ def make_spherical_poly_file_wrapper(dir_output, dir_input, tet_max_vol, r_icb, 
 
     return path_poly, path_tetgen_ele
 
-def build_sphere(dir_output, r, mesh_size, name = None):
+def build_sphere(subdir_out, r, mesh_size, name = None):
 
     # Create the sphere mesh with embedded LLSVP outline.
     with pygmsh.geo.Geometry() as geom:
@@ -304,9 +304,10 @@ def build_sphere(dir_output, r, mesh_size, name = None):
 
         # Save points and triangulation.
         # First create output directory.
-        subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
-        for dir_ in [dir_output, subdir_out]:
-            mkdir_if_not_exist(dir_)
+        #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
+        #for dir_ in [dir_output, subdir_out]:
+        #    mkdir_if_not_exist(dir_)
+        #mkdir_if_not_exist(subdir_out)
 
         # Second, save points.
         out_path_pts = os.path.join(subdir_out, 'pts_{:}.npy'.format(name))
@@ -320,7 +321,7 @@ def build_sphere(dir_output, r, mesh_size, name = None):
 
     return pts, tri
 
-def build_cmb_sphere(dir_output, dir_input, r_cmb, mesh_size):
+def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
 
     # Define a mesh coarsening factor.
     # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
@@ -440,9 +441,10 @@ def build_cmb_sphere(dir_output, dir_input, r_cmb, mesh_size):
 
     # Save points and triangulation.
     # First create output directory.
-    subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
-    for dir_ in [dir_output, subdir_out]:
-        mkdir_if_not_exist(dir_)
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
+    #for dir_ in [dir_output, subdir_out]:
+    #    mkdir_if_not_exist(dir_)
+    #mkdir_if_not_exist(subdir_out)
 
     # Second, save points.
     pts = np.array([x, y, z])
@@ -523,7 +525,7 @@ def move_points_outwards_spherical(pts, d_r):
 
     return pts
 
-def make_mesh_sizing_function(dir_output, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name):
+def make_mesh_sizing_function(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
@@ -531,7 +533,7 @@ def make_mesh_sizing_function(dir_output, tet_max_vol, tet_min_max_edge_length_r
     mesh_size_max = tet_min_max_edge_length_ratio*mesh_size_min
 
     # Set output file for mesh points. 
-    subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
     #
     #name = 'spheres'
     path_node           = os.path.join(subdir_out, '{:}.b.node'.format(name))
@@ -899,6 +901,11 @@ def assign_parameters(dir_input, subdir_out, name, order):
         rho[:, k] = rho_pts_region
 
     # Apply the LLSVP anomalies.
+    # First, create copies of the arrays with no anomalies.
+    v_p_no_anomaly = v_p.copy()
+    v_s_no_anomaly = v_s.copy()
+    rho_no_anomaly = rho.copy()
+    #
     v_p_anomaly = -0.016
     v_s_anomaly = -0.040
     rho_anomaly = +0.010
@@ -910,18 +917,23 @@ def assign_parameters(dir_input, subdir_out, name, order):
 
     # Loop over each variable and save as a binary file.
     var_str_list = ['vp', 'vs', 'rho']
-    arr_list = [v_p, v_s, rho]
+    arr_list_without_anomaly = [v_p_no_anomaly, v_s_no_anomaly, rho_no_anomaly]
+    arr_list_with_anomaly    = [v_p, v_s, rho]
+    arr_list = [arr_list_with_anomaly, arr_list_without_anomaly]
+    anomaly_str_list = ['with_anomaly', 'without_anomaly']
     for i in range(3):
 
-        # Get file path.
-        file_ = '{:}.1_{:}_pod_{:1d}_true.dat'.format(name, var_str_list[i], order) 
-        path = os.path.join(subdir_out, file_)
+        for j in range(2):
 
-        # Save as a binary file.
-        print('Saving to {:}.'.format(path))
-        with open(path, 'w') as out_id:
+            # Get file path.
+            file_ = '{:}.1_{:}_pod_{:1d}_true_{:}.dat'.format(name, var_str_list[i], order, anomaly_str_list[j]) 
+            path = os.path.join(subdir_out, file_)
 
-            arr_list[i].T.tofile(path)
+            # Save as a binary file.
+            print('Saving to {:}.'.format(path))
+            with open(path, 'w') as out_id:
+
+                arr_list[j][i].T.tofile(path)
 
     # Save the other input files in the binary format required by NormalModes.
     # First, save mesh.header file, which simply lists the number of
@@ -973,6 +985,91 @@ def assign_parameters(dir_input, subdir_out, name, order):
     # suffix .vtu.
     path_vtk = os.path.join(subdir_out, '{:}'.format(name))
     save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho)
+
+    # Create symbolic links.
+    dir_with_anomaly = os.path.join(subdir_out, 'with_anomaly')
+    dir_without_anomaly = os.path.join(subdir_out, 'without_anomaly')
+    for dir_ in [dir_with_anomaly, dir_without_anomaly]:
+
+        mkdir_if_not_exist(dir_)
+
+    current_dir = os.getcwd()
+
+
+    os.chdir(dir_with_anomaly)
+
+    rel_path_node_dat       = os.path.join('..', file_node_dat)
+    rel_path_ele_dat        = os.path.join('..', file_ele_dat)
+    rel_path_neigh_dat      = os.path.join('..', file_neigh_dat)
+    rel_path_mesh_header    = os.path.join('..', file_mesh_header)
+
+    path_anomaly_symmesh_header        = os.path.join('..', file_mesh_header)
+    path_anomaly_symlink_node_dat   = os.path.join('..', file_node_dat)
+    path_anomaly_symlink_ele_dat    = os.path.join('..', file_ele_dat)
+    path_anomaly_symlink_neigh_dat  = os.path.join('..', file_neigh_dat)
+    #
+    file_symlink_rho_dat = '{:}.1_rho_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_p_dat = '{:}.1_v_p_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_s_dat = '{:}.1_v_s_pod_{:1d}_true.dat'.format(name, order)
+    #path_anomaly_symlink_rho_dat = os.path.join('..', file_symlink_rho_dat)
+    #path_anomaly_symlink_v_p_dat = os.path.join('..', file_symlink_v_p_dat)
+    #path_anomaly_symlink_v_s_dat = os.path.join('..', file_symlink_v_s_dat)
+    #
+    file_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_p_dat = '{:}.1_v_p_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_s_dat = '{:}.1_v_s_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    #
+    rel_path_anomaly_rho_dat = os.path.join('..', file_anomaly_rho_dat)
+    rel_path_anomaly_v_p_dat = os.path.join('..', file_anomaly_v_p_dat)
+    rel_path_anomaly_v_s_dat = os.path.join('..', file_anomaly_v_s_dat)
+    #
+    file_no_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_p_dat = '{:}.1_v_p_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_s_dat = '{:}.1_v_s_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    #
+    rel_path_no_anomaly_rho_dat = os.path.join('..', file_no_anomaly_rho_dat)
+    rel_path_no_anomaly_v_p_dat = os.path.join('..', file_no_anomaly_v_p_dat)
+    rel_path_no_anomaly_v_s_dat = os.path.join('..', file_no_anomaly_v_s_dat)
+
+    path_pairs_with_anomaly =\
+                [   [rel_path_node_dat,             file_node_dat], 
+                    [rel_path_ele_dat,              file_ele_dat], 
+                    [rel_path_neigh_dat,            file_neigh_dat],
+                    [rel_path_mesh_header,          file_mesh_header],
+                    [rel_path_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    path_pairs_without_anomaly =\
+                [   [rel_path_node_dat,                 file_node_dat], 
+                    [rel_path_ele_dat,                  file_ele_dat], 
+                    [rel_path_neigh_dat,                file_neigh_dat],
+                    [rel_path_mesh_header,              file_mesh_header],
+                    [rel_path_no_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_no_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_no_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    for path_pair in path_pairs_with_anomaly:
+
+        path_true = path_pair[0]
+        path_symlink = path_pair[1]
+
+        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
+        print(command)
+        os.system(command)
+
+    os.chdir(dir_without_anomaly)
+
+    for path_pair in path_pairs_without_anomaly:
+
+        path_true = path_pair[0]
+        path_symlink = path_pair[1]
+
+        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
+        print(command)
+        os.system(command)
+
+    os.chdir(current_dir)
 
     return
 
@@ -1218,15 +1315,18 @@ def main():
     # Set the output directory.
     # The name includes the mesh size on the CMB sphere. 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
+    subdir_out = os.path.join(dir_output, 'sphere_{:>06.1f}'.format(mesh_size))
+    for dir_ in [dir_output, subdir_out]:
+        mkdir_if_not_exist(dir_)
+
     name = 'spheres'
 
     # Make the .poly file, defining polygonal surfaces of regions.
-    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_output, dir_input, tet_max_vol, r_icb, r_cmb, r_srf, name)
+    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_output, dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name)
 
     # Make the mesh sizing file (.b.poly), defining mesh size throughout domain.
     tet_min_max_edge_length_ratio = 2.0
-    make_mesh_sizing_function(dir_output, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name)
+    make_mesh_sizing_function(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name)
 
     # Tetrahedralise the .poly file, creating the mesh.
     tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name)
