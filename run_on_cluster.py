@@ -1,21 +1,74 @@
+import os
+from shutil import copyfile
+
+def mkdir_if_not_exist(dir_):
+
+    if not os.path.exists(dir_):
+
+        os.mkdir(dir_)
+
+    return
+
 def main():
 
+    dir_work = '/work/06414/tg857131/Magrathea/'
+    dir_cluster_input = os.path.join(dir_work, 'input_cluster')
+    path_cluster_input = os.path.join(dir_cluster_input, 'input_cluster.txt')
+
+    dir_scratch = '/scratch/06414/tg857131/Magrathea/'
+
     # Load cluster input file.
-    with open('input_cluster/input_cluster.txt', 'r') as in_id:
+    with open(path_cluster_input, 'r') as in_id:
 
         tet_max_vol = float(in_id.readline())
-        order       = 1
+        order       = int(in_id.readline())
 
-    dir_run_base = '/scratch/06414/tg857131/Magrathea/'
+    max_ellipticity = 0.0
+    if max_ellipticity == 0.0:
+
+        ellipticity_str = 'inf'
+
+    else:
+
+        ellipticity_str = '{:>3d}'.format(int(round(1.0/max_ellipticity)))
 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    name_run = 'prem_{:>06.1f}_{1d}'.format(edge_length, order)
+    name_run = 'prem_{:>06.1f}_{:1d}_{:}'.format(mesh_size, order, ellipticity_str)
 
-    dir_run = os.path.join(dir_run_base, name_run)
+    dir_run = os.path.join(dir_scratch, name_run)
+    dir_input = os.path.join(dir_run, 'input')
+    path_input = os.path.join(dir_input, 'input.txt')
+    dir_output = os.path.join(dir_run, 'output')
 
-    mkdir_if_not_exist
+    for dir_ in [dir_scratch, dir_run, dir_input, dir_output]:
 
-    pass
+        mkdir_if_not_exist(dir_)
+
+    with open(path_input, 'w') as out_id:
+
+        out_id.write('{:}\n'.format(dir_input))
+        out_id.write('{:}\n'.format(dir_output))
+        out_id.write('{:>16.12e}\n'.format(tet_max_vol))
+        out_id.write('{:>1d}\n'.format(order))
+    
+    name_model = 'prem_noocean.txt'
+    name_outline = 'llsvp_smooth.txt'
+    name_radii = 'radii.txt'
+
+    names = [name_model, name_outline, name_radii]
+    for name in names:
+
+        path_source = os.path.join(dir_cluster_input, name)
+        path_dest   = os.path.join(dir_input, name)
+
+        copyfile(path_source, path_dest) 
+
+    cmd_build_spherical = os.path.join(dir_work, 'build_spherical.py')    
+    cmd = 'python3 {:} {:}'.format(cmd_build_spherical, path_input)
+    print(cmd)
+    os.system(cmd)
+
+    return
 
 if __name__ == '__main__':
 
