@@ -1,7 +1,7 @@
 import os
 import sys
 
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import meshio
 import numpy as np
 import pygmsh
@@ -90,7 +90,7 @@ def get_real_points(mesh):
     return pts, tri_new, i_mapping
 
 # Building the mesh. ----------------------------------------------------------
-def make_spherical_poly_file_wrapper(dir_output, dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name):
+def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
@@ -1009,23 +1009,23 @@ def assign_parameters(dir_input, subdir_out, name, order):
     path_anomaly_symlink_neigh_dat  = os.path.join('..', file_neigh_dat)
     #
     file_symlink_rho_dat = '{:}.1_rho_pod_{:1d}_true.dat'.format(name, order)
-    file_symlink_v_p_dat = '{:}.1_v_p_pod_{:1d}_true.dat'.format(name, order)
-    file_symlink_v_s_dat = '{:}.1_v_s_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_p_dat = '{:}.1_vp_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_s_dat = '{:}.1_vs_pod_{:1d}_true.dat'.format(name, order)
     #path_anomaly_symlink_rho_dat = os.path.join('..', file_symlink_rho_dat)
     #path_anomaly_symlink_v_p_dat = os.path.join('..', file_symlink_v_p_dat)
     #path_anomaly_symlink_v_s_dat = os.path.join('..', file_symlink_v_s_dat)
     #
     file_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
-    file_anomaly_v_p_dat = '{:}.1_v_p_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
-    file_anomaly_v_s_dat = '{:}.1_v_s_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
     #
     rel_path_anomaly_rho_dat = os.path.join('..', file_anomaly_rho_dat)
     rel_path_anomaly_v_p_dat = os.path.join('..', file_anomaly_v_p_dat)
     rel_path_anomaly_v_s_dat = os.path.join('..', file_anomaly_v_s_dat)
     #
     file_no_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
-    file_no_anomaly_v_p_dat = '{:}.1_v_p_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
-    file_no_anomaly_v_s_dat = '{:}.1_v_s_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
     #
     rel_path_no_anomaly_rho_dat = os.path.join('..', file_no_anomaly_rho_dat)
     rel_path_no_anomaly_v_p_dat = os.path.join('..', file_no_anomaly_v_p_dat)
@@ -1303,6 +1303,8 @@ def main():
         dir_output = in_id.readline().strip()
         tet_max_vol = float(in_id.readline())
         order = int(in_id.readline())
+
+
     
     # Load radius information.
     path_input = os.path.join(dir_input, 'radii.txt')
@@ -1314,15 +1316,16 @@ def main():
 
     # Set the output directory.
     # The name includes the mesh size on the CMB sphere. 
-    mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    subdir_out = os.path.join(dir_output, 'sphere_{:>06.1f}'.format(mesh_size))
+    #mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>06.1f}'.format(mesh_size))
+    subdir_out = dir_output
     for dir_ in [dir_output, subdir_out]:
         mkdir_if_not_exist(dir_)
 
     name = 'spheres'
 
     # Make the .poly file, defining polygonal surfaces of regions.
-    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_output, dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name)
+    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name)
 
     # Make the mesh sizing file (.b.poly), defining mesh size throughout domain.
     tet_min_max_edge_length_ratio = 2.0
