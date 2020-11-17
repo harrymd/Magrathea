@@ -16,6 +16,12 @@ VtkTetra = evtk.vtk.VtkTetra
 VtkQuad = evtk.vtk.VtkQuad
 
 # Utilities. ------------------------------------------------------------------
+def LegendrePoly2(x):
+
+    f = ((3.0*(x**2.0)) - 1.0)/2.0
+
+    return f
+
 def mkdir_if_not_exist(dir_):
 
     if not os.path.exists(dir_):
@@ -24,7 +30,7 @@ def mkdir_if_not_exist(dir_):
 
     return
 
-def rlonlat_to_xyz(r, lon, lat):
+def RLonLat_to_XYZ(r, lon, lat):
     '''
     Converts from radius, longitude and latitude to Cartesian coordinates.
     '''
@@ -37,7 +43,7 @@ def rlonlat_to_xyz(r, lon, lat):
     
     return x, y, z
 
-def xyz_to_rlonlat(x, y, z):
+def XYZ_to_RLonLat(x, y, z):
     '''
     Converts from Cartesian coordinates to radius, longitude and latitude.
     '''
@@ -48,6 +54,35 @@ def xyz_to_rlonlat(x, y, z):
     lon     = np.arctan2(y, x)
 
     return r, lon, lat
+
+def RLonLatEll_to_XYZ(r, lon, lat, ell):
+    '''
+    Converts from radius, longitude and latitude to Cartesian coordinates.
+    '''
+
+    # Polar angle.
+    theta = (np.pi/2.0) - lat
+
+    # Adjust radius for ellipticity.
+    # Dahlen and Tromp (1998) eq. 14.4.
+    cos_theta = np.cos(theta)
+    r_p = r*(1.0 - ((2.0/3.0)*ell*LegendrePoly2(cos_theta))) 
+
+    # Points are moved radially outwards, so formula is otherwise unchanged.
+    x, y, z = RLonLat_to_XYZ(r_p, lon, lat)
+    
+    return x, y, z
+
+def XYZ_to_RLonLatEll(x, y, z, ellipticity_profile):
+    '''
+    Goes from x, y, z coordinates to r, lon, lat, ell, where
+    r, lon, lat are the coordinates in the sphere (before ellipsoidal deformation)
+    and ell is the ellipticity at those points.
+    '''
+
+    raise NotImplementedError
+
+    return r, lon, lat, ell 
 
 def get_real_points(mesh):
     '''
@@ -89,12 +124,159 @@ def get_real_points(mesh):
 
     return pts, tri_new, i_mapping
 
+def XYZ_to_REll(x, y, z, r_ellipticity_profile, ellipticity_profile):
+
+    r_oblate = np.sqrt((x**2.0) + (y**2.0) + (z**2.0))
+    #r_h_oblate = np.sqrt((x**2.0) + (y**2.0))
+    #theta = np.arctan2(z, r_h_oblate) # Note: Sign of theta not important.
+    cos_theta = z/r_oblate # Note sign of theta is not important.
+    P2CosTheta = LegendrePoly2(cos_theta)
+
+    # First guess of ellipticity, based on oblate radius.
+    # (Points outside the sphere will have the ellipticity of the outer surface.)
+    r_spherical_estimate_previous = r_oblate.copy()
+    ellipticity_estimate_previous = np.interp(r_oblate, r_ellipticity_profile, ellipticity_profile)
+    #
+    r_spherical_estimate_new = np.zeros(r_oblate.shape)
+    ellipticity_estimate_new = np.zeros(r_oblate.shape)
+    change_r_spherical_estimate = np.zeros(r_oblate.shape)
+
+    # Iteratively solve.
+    print('XYZ_to_REll()')
+
+    n_iterations_max = 100
+    n_pts = x.size
+    converged = np.zeros(x.shape, dtype = np.bool)
+    # Target convergence between successive iterations (km).
+    thresh = 1.0E-10
+    successful = False # Flag for successful convergence.
+    for i in range(n_iterations_max):
+
+        #j_not_converged = np.where(~converged)[0]
+        j_not_converged = ~converged
+        k = np.unravel_index(j_not_converged.argmax(), j_not_converged.shape)
+
+        # Estimate spherical radius from previous estimate of ellipticity.
+        r_spherical_estimate_new[j_not_converged] = r_oblate[j_not_converged]/(1.0 - ((2.0/3.0)*ellipticity_estimate_previous[j_not_converged]*P2CosTheta[j_not_converged]))
+        ellipticity_estimate_new[j_not_converged] = np.interp(r_spherical_estimate_new[j_not_converged], r_ellipticity_profile, ellipticity_profile)
+
+        # Check for convergence.
+        change_r_spherical_estimate[j_not_converged] = np.abs(r_spherical_estimate_new[j_not_converged] - r_spherical_estimate_previous[j_not_converged])
+
+        #converged_copy = converged.copy()
+        converged[j_not_converged] = (change_r_spherical_estimate[j_not_converged] < thresh)
+        n_converged = np.sum(converged)
+
+        print('Iteration {:>5d} (max.: {:>5d}), {:>9d} out of {:>9d} points converged.'.format(i + 1, n_iterations_max, n_converged, n_pts))
+
+        # Case 1: All values have converged.
+        if n_converged == n_pts:
+            
+            successful = True
+            break
+
+        # Case 2: Some values have not converged.
+        else:
+
+            # Prepare for next iteration.
+            r_spherical_estimate_previous[j_not_converged] = r_spherical_estimate_new[j_not_converged]
+            ellipticity_estimate_previous[j_not_converged] = ellipticity_estimate_new[j_not_converged]
+
+    if not successful:
+        
+        #print('These points did not converge.')
+        #print(x[j_not_converged])
+        #print(y[j_not_converged])
+        #print(z[j_not_converged])
+        raise ValueError('Iterative solution for r did not converge.')
+
+    return r_spherical_estimate_new, ellipticity_estimate_new
+
+def test_XYZ_to_REll(case):
+
+    # Case 1: Random points.
+    # Case 2: Specific difficult points.
+
+    if case == 1:
+
+        # Generate random points inside sphere.
+        r_max = 6371.0
+        n_pts = 1000
+        x_spherical = np.zeros(n_pts)
+        y_spherical = np.zeros(n_pts)
+        z_spherical = np.zeros(n_pts)
+        i = 0
+        while i < n_pts:
+
+            x_random = np.random.uniform(low = -r_max, high = r_max)
+            y_random = np.random.uniform(low = -r_max, high = r_max)
+            z_random = np.random.uniform(low = -r_max, high = r_max)
+
+            r_random = np.sqrt((x_random**2.0) + (y_random**2.0) + (z_random**2.0))
+
+            if r_random <= r_max:
+
+                x_spherical[i] = x_random
+                y_spherical[i] = y_random
+                z_spherical[i] = z_random
+
+                i = i + 1
+
+    elif case == 2:
+
+        x_spherical = np.array([-5175.87774264, -1281.64533839])
+        y_spherical = np.array([ 2036.66020355,  5676.29719589])
+        z_spherical = np.array([  384.22039391, -1240.90543724])
+
+    # Get spherical coordinates.
+    r_spherical, lon, lat = XYZ_to_RLonLat(x_spherical, y_spherical, z_spherical) 
+
+    # Load ellipticity profile.
+    ellipticity_data = np.loadtxt('../../input/Magrathea/llsvp/ellipticity_profile.txt')
+    r_ellipticity_profile, ellipticity_profile = ellipticity_data.T
+    r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert from m to km.
+
+    # Interpolate ellipticity profile at points.
+    ellipticity = np.interp(r_spherical, r_ellipticity_profile, ellipticity_profile)
+
+    # Distort spherical coordinates according to ellipticity.
+    theta = (np.pi/2.0) - lat
+    cos_theta = np.cos(theta)
+    P2CosTheta = LegendrePoly2(cos_theta)
+    r_factor = (1.0 - ((2.0/3.0)*ellipticity*P2CosTheta))
+    r_oblate = r_spherical*r_factor
+
+    # Find the x, y, z coordinates of the distorted points.
+    x_oblate, y_oblate, z_oblate = RLonLat_to_XYZ(r_oblate, lon, lat)
+
+    # Try to convert back to r_spherical.
+    r_spherical_estimate, ellipticity_estimate = XYZ_to_REll(x_oblate, y_oblate, z_oblate, r_ellipticity_profile, ellipticity_profile)
+
+    return
+
 # Building the mesh. ----------------------------------------------------------
-def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name):
+def make_spherical_poly_file_wrapper_old(dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name, ellipticity_data):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
     #mesh_size = 3.0*mesh_size
+
+    # Load ellipticity data.
+    if ellipticity_data is None:
+
+        ellipticity_srf = None
+        ellipticity_cmb = None
+        ellipticity_icb = None
+
+    else:
+
+        r_ellipticity_profile = ellipticity_data[:, 0]
+        r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+        ellipticity_profile = ellipticity_data[:, 1]
+        
+        ellipticity_srf = np.interp(r_srf, r_ellipticity_profile, ellipticity_profile)
+        ellipticity_cmb = np.interp(r_cmb, r_ellipticity_profile, ellipticity_profile)
+        ellipticity_icb = np.interp(r_icb, r_ellipticity_profile, ellipticity_profile)
 
     # Set output file for mesh points. 
     #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
@@ -144,11 +326,11 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
 
         pts_cmb, tri_cmb,                                           \
         i_pts_inside_llsvp_on_cmb, i_pts_boundary_llsvp_on_cmb  =   \
-                build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size)
+                build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb)
 
-        pts_srf, tri_srf = build_sphere(subdir_out, r_srf, mesh_size, 'srf')
-        pts_icb, tri_icb = build_sphere(subdir_out, r_icb, mesh_size, 'icb')
-
+        pts_srf, tri_srf = build_ellipsoid(subdir_out, r_srf, mesh_size, ellipticity_srf, 'srf')
+        pts_icb, tri_icb = build_ellipsoid(subdir_out, r_icb, mesh_size, ellipticity_icb, 'icb')
+        
     # Add the points defining the top surface of the LLSVP.
     # These are simply copies of the points in the bottom surface of the
     # LLSVP, moved outwards by the height of the LLSVP.
@@ -173,7 +355,17 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
     # Create the new points on the top surface of the LLSVP.
     i_llsvp_top = np.array(list(range(n_pts_llsvp_top)), dtype = np.int)
     pts_llsvp_on_cmb = pts_cmb[:, i_pts_llsvp_on_cmb]
-    pts_llsvp_top = move_points_outwards_spherical(pts_llsvp_on_cmb, d_r_llsvp)
+    if ellipticity_data is None:
+
+        pts_llsvp_top = move_points_outwards_spherical(pts_llsvp_on_cmb, d_r_llsvp)
+
+    else:
+
+        ellipticity_top_llsvp = np.interp((r_cmb + d_r_llsvp),
+                r_ellipticity_profile, ellipticity_profile)
+
+        pts_llsvp_top = move_points_outwards_ellipsoidal(pts_llsvp_on_cmb, d_r_llsvp,
+                r_cmb, ellipticity_top_llsvp)
 
     # Next, find all of the triangles in the bottom surface of the LLSVP.
     n_tri_cmb = tri_cmb.shape[1]
@@ -228,7 +420,7 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
     #fig = plt.figure()
     #ax = plt.gca()
 
-    #r, lon, lat = xyz_to_rlonlat(*pts_llsvp_top)
+    #r, lon, lat = XYZ_to_RLonLat(*pts_llsvp_top)
     #lon_deg = np.rad2deg(lon)
     #lat_deg = np.rad2deg(lat)
 
@@ -248,11 +440,13 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
     tri_srf = tri_srf + n_pts_cmb_and_llsvp_top + n_pts_icb
 
     # Define the regions.
+    # Note: ellipticity is not accounted for, because typical flattening
+    # for Earth (~1/300) does not move the mid-points of each shell into
+    # a different shell.
     # The polygonal surfaces define four regions (1 : inner core, 2 : outer core,
     # 3 : mantle, and 4 : LLSVP). These are identified in the .poly file by a single
     # point placed within them.
     # The points for the outer core and mantle are placed along the x-axis,
-    # half-way between the bounding spheres.
     pt_inner_core   = [0.0,                   0.0, 0.0]
     pt_outer_core   = [(r_icb + r_cmb)/2.0,   0.0, 0.0]
     pt_mantle       = [(r_cmb + r_srf)/2.0,   0.0, 0.0]
@@ -267,7 +461,7 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
     llsvp_centre_lon = np.deg2rad(float(llsvp_centre_lon_deg))
     llsvp_centre_lat = np.deg2rad(float(llsvp_centre_lat_deg))
     llsvp_centre_r = r_cmb + (d_r_llsvp/2.0) 
-    pt_centre_llsvp = list(rlonlat_to_xyz(llsvp_centre_r, llsvp_centre_lon, llsvp_centre_lat))
+    pt_centre_llsvp = list(RLonLat_to_XYZ(llsvp_centre_r, llsvp_centre_lon, llsvp_centre_lat))
     #
     pts_regions = np.array([pt_inner_core, pt_outer_core, pt_mantle, pt_centre_llsvp]).T
 
@@ -276,13 +470,270 @@ def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, 
 
     return path_poly, path_tetgen_ele
 
-def build_sphere(subdir_out, r, mesh_size, name = None):
+def make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
+
+
+
+    # Determine the mesh size on the CMB sphere. 
+    mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
+    #mesh_size = 3.0*mesh_size
+
+    r_discons = model['r'][discon_lists['all']]
+    n_discons = len(r_discons)
+
+    mesh_size_list = np.zeros(n_discons) + mesh_size
+    i_mesh_too_big = (mesh_size_list > mesh_size_maxima)
+    mesh_size_list[i_mesh_too_big] = mesh_size_maxima[i_mesh_too_big]
+
+    # Load ellipticity data.
+    if ellipticity_data is None:
+
+        raise NotImplementedError('Extra discontinuities in mantle not implemented for non-ellipsoidal models.')
+
+        ellipticity_srf = None
+        ellipticity_cmb = None
+        ellipticity_icb = None
+
+    else:
+
+        r_ellipticity_profile = ellipticity_data[:, 0]
+        r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+        ellipticity_profile = ellipticity_data[:, 1]
+
+        ellipticity    = np.interp( r_discons,
+                                    r_ellipticity_profile,
+                                    ellipticity_profile)
+
+    # Set output file for mesh points. 
+    out_path_i_pts_inside_llsvp_on_cmb = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
+    out_path_i_pts_boundary_llsvp_on_cmb = os.path.join(subdir_out, 'i_pts_boundary_llsvp_on_cmb.npy')
+
+    out_paths_pts = []
+    out_paths_tri = []
+    for i in range(discon_lists['n_discons']):
+
+        out_path_pts_discon_i = os.path.join(subdir_out, 'discon_{:>1d}_pts.npy'.format(i))
+        out_path_tri_discon_i = os.path.join(subdir_out, 'discon_{:>1d}_tri.npy'.format(i))
+
+        out_paths_pts.append(out_path_pts_discon_i)
+        out_paths_tri.append(out_path_tri_discon_i)
+
+    # Load mesh points if already exist.
+    path_list = [   *out_paths_pts, *out_paths_tri,
+                    out_path_i_pts_inside_llsvp_on_cmb,
+                    out_path_i_pts_boundary_llsvp_on_cmb]
+    files_exist = all([os.path.exists(path_) for path_ in path_list])
+
+    pts_list = []
+    tri_list = []
+
+    if files_exist: 
+
+        print('Points and triangulation files already exist.')
+        for i in range(discon_lists['n_discons']):
+
+            print('Loading {:}'.format(out_paths_pts[i]))
+            pts_list.append(np.load(out_paths_pts[i]))
+
+            print('Loading {:}'.format(out_paths_tri[i]))
+            tri_list.append(np.load(out_paths_tri[i]))
+
+        print('Loading {:}.'.format(out_path_i_pts_inside_llsvp_on_cmb))
+        i_pts_inside_llsvp_on_cmb = np.load(out_path_i_pts_inside_llsvp_on_cmb)
+        print('Loading {:}.'.format(out_path_i_pts_boundary_llsvp_on_cmb))
+        i_pts_boundary_llsvp_on_cmb = np.load(out_path_i_pts_boundary_llsvp_on_cmb)
+
+    # Otherwise, create mesh points.
+    else:
+
+        for i in range(discon_lists['n_discons']):
+            
+            r_discon = model['r'][discon_lists['all'][i]]
+            name_i = 'discon_{:>1d}'.format(i)
+
+            if (i == discon_lists['j_cmb']):
+                
+                pts_i, tri_i,                                               \
+                i_pts_inside_llsvp_on_cmb, i_pts_boundary_llsvp_on_cmb  =   \
+                build_cmb_ellipsoid(subdir_out, dir_input, r_discon, mesh_size_list[i], ellipticity[i], name_i)
+
+            else:
+
+                pts_i, tri_i = build_ellipsoid(subdir_out, r_discon, mesh_size_list[i], ellipticity[i], name_i)
+
+            pts_list.append(pts_i)
+            tri_list.append(tri_i)
+
+    # Add the points defining the top surface of the LLSVP.
+    # These are simply copies of the points in the bottom surface of the
+    # LLSVP, moved outwards by the height of the LLSVP.
+    d_r_llsvp = 400.0 # Height of LLSVP in km.
+    #
+    # First, find all of the points in the bottom surface of the LLSVP.
+    #i_pts_llsvp_on_cmb = np.concatenate([i_pts_inside_llsvp_on_cmb,
+    #                        i_pts_boundary_llsvp_on_cmb]).astype(np.int)
+    i_pts_llsvp_on_cmb = np.concatenate([i_pts_boundary_llsvp_on_cmb,
+                                         i_pts_inside_llsvp_on_cmb]).astype(np.int)
+
+    # Create a mapping between the triangulation indices and a list of new
+    # points.
+    n_pts_llsvp_top = len(i_pts_llsvp_on_cmb)
+    i_max_index_llsvp_on_cmb = np.max(i_pts_llsvp_on_cmb)
+    mapping_i_llsvp_base_i_llsvp_top = np.zeros(i_max_index_llsvp_on_cmb + 1, dtype = np.int) - 1
+    #
+    for j, i in enumerate(i_pts_llsvp_on_cmb):
+
+        mapping_i_llsvp_base_i_llsvp_top[i] = j
+
+    # Create the new points on the top surface of the LLSVP.
+    i_llsvp_top = np.array(list(range(n_pts_llsvp_top)), dtype = np.int)
+    pts_cmb = pts_list[discon_lists['j_cmb']]
+    pts_llsvp_on_cmb = pts_cmb[:, i_pts_llsvp_on_cmb]
+    r_cmb = r_discons[discon_lists['j_cmb']]
+    if ellipticity_data is None:
+
+        pts_llsvp_top = move_points_outwards_spherical(pts_llsvp_on_cmb, d_r_llsvp)
+
+    else:
+
+        ellipticity_top_llsvp = np.interp((r_cmb + d_r_llsvp),
+                r_ellipticity_profile, ellipticity_profile)
+
+        pts_llsvp_top = move_points_outwards_ellipsoidal(pts_llsvp_on_cmb, d_r_llsvp,
+                r_cmb, ellipticity_top_llsvp)
+
+    # Next, find all of the triangles in the bottom surface of the LLSVP.
+    tri_cmb = tri_list[discon_lists['j_cmb']]
+    n_tri_cmb = tri_cmb.shape[1]
+    tri_cmb_in_llsvp = np.zeros(n_tri_cmb, dtype = np.bool)
+
+    for i in range(n_tri_cmb):
+
+        if np.all(np.isin(tri_cmb[:, i], i_pts_llsvp_on_cmb)):
+
+            tri_cmb_in_llsvp[i] = True
+
+    tri_llsvp_base = tri_cmb[:, tri_cmb_in_llsvp]
+    n_tri_llsvp_base = tri_llsvp_base.shape[1]
+
+    # Apply the mapping to find the triangulation on the top of the LLSVP.
+    n_tri_llsvp_top = n_tri_llsvp_base
+    tri_llsvp_top = np.zeros((3, n_tri_llsvp_top), dtype = np.int)
+    for i in range(n_tri_llsvp_top):
+
+        for j in range(3):
+
+            index_new = mapping_i_llsvp_base_i_llsvp_top[tri_llsvp_base[j, i]]
+            assert index_new > -1
+            tri_llsvp_top[j, i] = index_new
+
+    # Apply offsets.
+    #n_pts_cmb_and_llsvp_top = n_pts_cmb + n_pts_llsvp_top
+    #n_pts_cumulative = n_pts_cmb_and_llsvp_top
+    n_pts_cumulative = 0
+    for i in range(discon_lists['n_discons']):
+
+        #if not (i == discon_lists['j_cmb']):
+
+        tri_list[i] = tri_list[i] + n_pts_cumulative
+        n_pts_i = pts_list[i].shape[1]
+
+        if (i == discon_lists['j_cmb']):
+
+            tri_llsvp_base = tri_llsvp_top + n_pts_cumulative
+            i_pts_inside_llsvp_on_cmb = i_pts_inside_llsvp_on_cmb + n_pts_cumulative
+            i_pts_boundary_llsvp_on_cmb = i_pts_boundary_llsvp_on_cmb + n_pts_cumulative
+            i_pts_llsvp_on_cmb = i_pts_llsvp_on_cmb + n_pts_cumulative
+
+        n_pts_cumulative = n_pts_cumulative + n_pts_i
+
+    i_llsvp_top = i_llsvp_top + n_pts_cumulative
+    tri_llsvp_top = tri_llsvp_top + n_pts_cumulative
+
+    ## Offset the top LLSVP point lists, because they will be listed after the
+    ## point lists for the CMB.
+    #n_pts_cmb = pts_cmb.shape[1]
+    #i_llsvp_top = i_llsvp_top + n_pts_cmb
+    #tri_llsvp_top = tri_llsvp_top + n_pts_cmb
+
+    # Define the sides of the LLSVP as quadrilaterals.
+    # Each quadrilateral joins one edge of the upper outline to one edge
+    # of the lower outline.
+    n_llsvp_outline_pts = len(i_pts_boundary_llsvp_on_cmb)
+    n_llsvp_outline_edges = n_llsvp_outline_pts
+    #
+    quad_llsvp_sides = np.zeros((4, n_llsvp_outline_edges), dtype = np.int)
+    for i in range(n_llsvp_outline_edges):
+
+        i0 = i
+        i1 = (i + 1) % n_llsvp_outline_edges
+
+        i0_base = i_pts_boundary_llsvp_on_cmb[i0]
+        i1_base = i_pts_boundary_llsvp_on_cmb[i1]
+        i0_top  = i_llsvp_top[i0]
+        i1_top  = i_llsvp_top[i1]
+
+        quad_llsvp_sides[:, i] = [i0_base, i1_base, i1_top, i0_top]
+
+    ## Plot.
+    #fig = plt.figure()
+    #ax = plt.gca()
+
+    #r, lon, lat = XYZ_to_RLonLat(*pts_llsvp_top)
+    #lon_deg = np.rad2deg(lon)
+    #lat_deg = np.rad2deg(lat)
+
+    #ax.triplot(lon_deg, lat_deg, triangles = tri_cmb_top.T)
+
+    #ax.set_xlabel('Longitude')
+    #ax.set_ylabel('Latitude')
+    #ax.set_xlim([-180.0, 180.0])
+    #ax.set_ylim([-90.0, 90.0])
+    #    
+    #plt.show()
+
+    # Define the regions.
+    # Note: ellipticity is not accounted for, because typical flattening
+    # for Earth (~1/300) does not move the mid-points of each shell into
+    # a different shell.
+    # The polygonal surfaces define four regions (1 : inner core, 2 : outer core,
+    # 3 : mantle, and 4 : LLSVP). These are identified in the .poly file by a single
+    # point placed within them.
+    # The points for the outer core and mantle are placed along the x-axis,
+    r_discons_with_zero = np.insert(r_discons, 0, 0.0)
+    x_shell_points = r_discons_with_zero[0:-1] + 0.5*np.diff(r_discons_with_zero)
+    shell_points = np.array([[x_shell_points[i], 0.0, 0.0] for i in range(discon_lists['n_discons'])])
+    #
+    # The point for the LLSVP is placed at the centroid of the outline,
+    # halfway between the inner and outer surfaces.
+    path_llsvp = os.path.join(dir_input, 'llsvp_smooth.txt')
+    with open(path_llsvp, 'r') as in_id:
+        
+        _, llsvp_centre_lon_deg, llsvp_centre_lat_deg = in_id.readline().split()
+
+    llsvp_centre_lon = np.deg2rad(float(llsvp_centre_lon_deg))
+    llsvp_centre_lat = np.deg2rad(float(llsvp_centre_lat_deg))
+    llsvp_centre_r = r_cmb + (d_r_llsvp/2.0) 
+    pt_centre_llsvp = list(RLonLat_to_XYZ(llsvp_centre_r, llsvp_centre_lon, llsvp_centre_lat))
+    #
+    pts_regions = np.array([*shell_points, pt_centre_llsvp]).T
+
+    #
+
+    # Write the .poly file.
+    path_poly, path_tetgen_ele = make_spherical_poly_file(pts_list, pts_llsvp_top, tri_list, tri_llsvp_top, quad_llsvp_sides, pts_regions, subdir_out, name)
+    #path_poly, path_tetgen_ele = make_spherical_poly_file(pts_cmb, pts_llsvp_top, pts_icb, pts_srf, tri_cmb, tri_llsvp_top, quad_llsvp_sides, tri_icb, tri_srf, pts_regions, subdir_out, name)
+
+    return path_poly, path_tetgen_ele
+
+def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
 
     # Create the sphere mesh with embedded LLSVP outline.
     with pygmsh.geo.Geometry() as geom:
 
-        # Add the ball (spherical surface).
-        ball = geom.add_ball([0.0, 0.0, 0.0], r, mesh_size = mesh_size)
+        # Create a representation of the ellipsoidal surface and add it 
+        # to the geometry.
+        ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r, ellipticity)
 
         # Generate the mesh.
         mesh = geom.generate_mesh(dim = 2, verbose = False)
@@ -293,12 +744,8 @@ def build_sphere(subdir_out, r, mesh_size, name = None):
     tri = tri.T
 
     # Unfortunately, it seems that Pygmsh doesn't guarantee that the points
-    # fall on the surface of the sphere, so here we readjust them.
-    r_pts = np.linalg.norm(pts, axis = 0)
-    pts = r*pts/r_pts
-
-    #r_pts = np.linalg.norm(pts, axis = 1)
-    #print(np.min(r_pts), np.max(r_pts))
+    # fall on the surface of the sphere/ellipsoid, so here we readjust them.
+    pts = rescale_to_surface(pts, r, ellipticity)
 
     if name is not None:
 
@@ -310,23 +757,24 @@ def build_sphere(subdir_out, r, mesh_size, name = None):
         #mkdir_if_not_exist(subdir_out)
 
         # Second, save points.
-        out_path_pts = os.path.join(subdir_out, 'pts_{:}.npy'.format(name))
+        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
         print('Saving points to {:}'.format(out_path_pts))
         np.save(out_path_pts, pts)
 
         # Third, save triangulation.
-        out_path_tri = os.path.join(subdir_out, 'tri_{:}.npy'.format(name))
+        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
         print('Saving triangulation to {:}'.format(out_path_tri))
         np.save(out_path_tri, tri)
 
     return pts, tri
 
-def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
+def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
 
     # Define a mesh coarsening factor.
     # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
     # a relatively even mesh size.
-    mesh_size_factor = 2.0 
+    #mesh_size_factor = 2.0 
+    mesh_size_factor = 1.0
 
     # Load the LLSVP outline and find the coordinates of the points with the
     # chosen spacing by linear interpolation.
@@ -347,15 +795,21 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
     # Find the Cartesian coordinates of the points.
     lon_pts_rads = np.deg2rad(lon_pts)
     lat_pts_rads = np.deg2rad(lat_pts)
-    x_pts, y_pts, z_pts = rlonlat_to_xyz(r_cmb, lon_pts_rads, lat_pts_rads) 
+    if ellipticity_cmb is None:
+
+        x_pts, y_pts, z_pts = RLonLat_to_XYZ(r_cmb, lon_pts_rads, lat_pts_rads) 
+
+    else:
+
+        x_pts, y_pts, z_pts = RLonLatEll_to_XYZ(r_cmb, lon_pts_rads, lat_pts_rads, ellipticity_cmb) 
+
     pts = np.array([x_pts, y_pts, z_pts]).T
     n_pts = pts.shape[0]
 
-    # Create the sphere mesh with embedded LLSVP outline.
+    # Create the ellipsoidal mesh with embedded LLSVP outline.
     with pygmsh.geo.Geometry() as geom:
 
-        # Add the ball (spherical surface).
-        ball_srf = geom.add_ball([0.0, 0.0, 0.0], r_cmb, mesh_size = mesh_size)
+        ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r_cmb, ellipticity_cmb)
 
         # Add the points that form the point-wise linear boundary of the LLSVP.
         pt_list = []
@@ -372,16 +826,10 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
             i1 = (i + 1) % n_pts
 
             line = geom.add_line(pt_list[i0], pt_list[i1])
-
-            geom.in_surface(line, ball_srf.surface_loop)
-
+            geom.in_surface(line, ellipsoid_shell.surface_loop)
             line_list.append(line)
 
-        #print(line_list)
         curve_loop = geom.add_curve_loop(line_list)
-        #geom.add_physical(curve_loop, label = "outline")
-        #for i in range(n_pts):
-        #    geom.add_physical(line_list[i], label = 'line_segment_{:>09d}'.format(i))
 
         # Generate the mesh.
         mesh = geom.generate_mesh(dim = 2, verbose = False)
@@ -396,9 +844,8 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
     tri = tri.T
 
     # Unfortunately, it seems that Pygmsh doesn't guarantee that the points
-    # fall on the surface of the sphere, so here we readjust them.
-    r_pts = np.linalg.norm(pts, axis = 0)
-    pts = r_cmb*pts/r_pts
+    # fall on the surface of the sphere/ellipsoid, so here we readjust them.
+    pts = rescale_to_surface(pts, r_cmb, ellipticity_cmb)
 
     # Re-label the outline points after construction points have been removed.
     i_outline_new = np.zeros(i_outline.shape, i_outline.dtype)
@@ -413,7 +860,7 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
     # Find the points belonging to the LLSVP.
     # First, create Shapely polygon representing the points.
     x, y, z = pts.T
-    _, lon, lat = xyz_to_rlonlat(x, y, z)
+    _, lon, lat = XYZ_to_RLonLat(x, y, z)
     lon_deg = np.rad2deg(lon)
     lat_deg = np.rad2deg(lat)
     pts_deg_array = np.squeeze(np.array([lon_deg[i_outline], lat_deg[i_outline]]))
@@ -429,6 +876,8 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
 
             i_inside.append(i)
 
+    i_inside = np.array(i_inside, dtype = np.int)
+
     # Remove longitude shift.
     lon_deg = lon_deg - shift
     i_2pi_shift = (lon_deg < -180.0)
@@ -437,41 +886,97 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
     # Convert back to x, y and z.
     lat_rad = np.deg2rad(lat_deg)
     lon_rad = np.deg2rad(lon_deg)
-    x, y, z = rlonlat_to_xyz(r_cmb, lon_rad, lat_rad)
+    x, y, z = RLonLatEll_to_XYZ(r_cmb, lon_rad, lat_rad, ellipticity_cmb)
 
-    # Save points and triangulation.
-    # First create output directory.
-    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
-    #for dir_ in [dir_output, subdir_out]:
-    #    mkdir_if_not_exist(dir_)
-    #mkdir_if_not_exist(subdir_out)
+    if name is not None:
 
-    # Second, save points.
-    pts = np.array([x, y, z])
-    out_path_pts = os.path.join(subdir_out, 'pts_cmb.npy')
-    print('Saving points to {:}'.format(out_path_pts))
-    np.save(out_path_pts, pts)
+        # Save points and triangulation.
+        # First create output directory.
+        #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
+        #for dir_ in [dir_output, subdir_out]:
+        #    mkdir_if_not_exist(dir_)
+        #mkdir_if_not_exist(subdir_out)
 
-    # Third, save triangulation.
-    out_path_tri = os.path.join(subdir_out, 'tri_cmb.npy')
-    print('Saving triangulation to {:}'.format(out_path_tri))
-    np.save(out_path_tri, tri)
+        # Second, save points.
+        pts = np.array([x, y, z])
+        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
+        print('Saving points to {:}'.format(out_path_pts))
+        np.save(out_path_pts, pts)
 
-    # Fourth, save list of inside points.
-    out_path_i_pts_inside = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
-    print('Saving list of indices of LLSVP interior points to {:}'.format(out_path_i_pts_inside)) 
-    np.save(out_path_i_pts_inside, i_inside)
+        # Third, save triangulation.
+        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
+        print('Saving triangulation to {:}'.format(out_path_tri))
+        np.save(out_path_tri, tri)
 
-    # Fifth, save list of points on boundary of LLSVP.
-    out_path_i_pts_boundary = os.path.join(subdir_out, 'i_pts_boundary_llsvp_on_cmb.npy')
-    print('Saving list of indices of LLSVP boundary points to {:}'.format(out_path_i_pts_boundary)) 
-    np.save(out_path_i_pts_boundary, i_outline)
+        # Fourth, save list of inside points.
+        out_path_i_pts_inside = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
+        print('Saving list of indices of LLSVP interior points to {:}'.format(out_path_i_pts_inside)) 
+        np.save(out_path_i_pts_inside, i_inside)
 
-    make_plots = False 
+        # Fifth, save list of points on boundary of LLSVP.
+        out_path_i_pts_boundary = os.path.join(subdir_out, 'i_pts_boundary_llsvp_on_cmb.npy')
+        print('Saving list of indices of LLSVP boundary points to {:}'.format(out_path_i_pts_boundary)) 
+        np.save(out_path_i_pts_boundary, i_outline)
+
+    #make_plots = False 
     if make_plots:
 
-        # Plot.
-        fig = plt.figure()
+        import matplotlib.pyplot as plt
+
+        print(ellipticity_cmb)
+        print(1.0/ellipticity_cmb)
+
+        # Plot points in cross-section.
+        fig, ax_arr = plt.subplots(1, 2, figsize = (11.0, 8.5))
+        ax  = ax_arr[0] 
+        
+        sign_y = np.sign(y)
+        sign_y[sign_y == 0.0] = 1.0
+        r_h = np.sqrt(x**2.0 + y**2.0)*sign_y
+
+        theta_span = np.linspace(0.0, 2.0*np.pi, num = 1000)
+        r_h_circle = r_cmb*np.sin(theta_span)
+        z_circle = r_cmb*np.cos(theta_span)
+
+        cos_theta_span = np.cos(theta_span)
+        r_ellipse = r_cmb*(1.0 - (2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_span))
+        r_h_ellipse = r_ellipse*np.sin(theta_span)
+        z_ellipse = r_ellipse*np.cos(theta_span)
+
+        ax.scatter(r_h, z, s = 3, c = 'k', zorder = 10)
+
+        ax.plot(r_h_circle, z_circle, c = 'r', label = 'Sphere')
+        ax.plot(r_h_ellipse, z_ellipse, c = 'b', label = 'Ellipsoid')
+
+        ax.legend()
+
+        ax.set_aspect(1.0)
+
+        ax = ax_arr[1]
+
+        r_pts = np.sqrt((x**2.0 + y**2.0 + z**2.0))
+        r_h = np.sqrt(x**2.0 + y**2.0)
+        
+        theta_pts = np.arctan2(r_h, z)
+        cos_theta_pts = np.cos(theta_pts)
+        
+        r_from_theta_pts = r_cmb*(1.0 - ((2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_pts)))
+
+        max_r_error = np.max(np.abs(r_from_theta_pts - r_pts))
+        print('Maximum r error = {:>.3e} (units of R_cmb)'.format(max_r_error/r_cmb))
+
+        ax.scatter(r_pts - r_cmb, r_from_theta_pts - r_cmb, s = 3, c = 'k')
+        ax.plot([-15.0, 0.0], [-15.0, 0.0])
+
+        ax.set_xlabel('Radii of points - CMB radius')
+        ax.set_ylabel('Expected radii at point latitude - CMB radius')
+
+        ax.set_aspect(1.0)
+        
+        # -----------------------------------------------------------------
+
+        # Plot points on 2D map.
+        fig = plt.figure(figsize = (11.0, 8.5))
         ax = plt.gca()
 
         i_east = np.where(lon > 0.0)[0]
@@ -499,8 +1004,7 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
         ax.set_xlim([-180.0, 180.0])
         ax.set_ylim([-90.0, 90.0])
         
-        #plt.show()
-
+        # Plot points in 3D.
         fig = plt.figure(figsize = (8.5, 8.5))
         ax = fig.add_subplot(1, 1, 1, projection='3d')
         ax.plot_trisurf(x, y, z, triangles = tri.T, edgecolor = (1.0, 0.0, 0.0, 0.2), color = (1.0, 1.0, 1.0, 1.0)) #cmap = 'magma') 
@@ -511,21 +1015,85 @@ def build_cmb_sphere(subdir_out, dir_input, r_cmb, mesh_size):
 
     return pts, tri, i_inside, i_outline
 
+def move_points_outwards_ellipsoidal(pts, d_r_spherical, r_spherical, ellipticity_at_d_r):
+    '''
+    r_spherical     Known spherical radius of points (before flattening).
+    ellipticity  Ellipticity at radius r + d_r.
+    '''
+
+    # Get the longitude and latitude of the points.
+    _, lon, lat = XYZ_to_RLonLat(*pts)
+
+    # Add the outward offset.
+    r_new_spherical = r_spherical + d_r_spherical
+
+    # Find the deformed coordinates.
+    x, y, z = RLonLatEll_to_XYZ(r_new_spherical, lon, lat, ellipticity_at_d_r)
+
+    pts = np.array([x, y, z])
+
+    return pts
+
 def move_points_outwards_spherical(pts, d_r):
 
     # Convert to geographical coordinates.
-    r, lon, lat = xyz_to_rlonlat(*pts)
+    r, lon, lat = XYZ_to_RLonLat(*pts)
 
     # Add the outward offset.
     r = r + d_r
 
     # Convert back to Cartesian coordinates.
-    x, y, z = rlonlat_to_xyz(r, lon, lat)
+    x, y, z = RLonLat_to_XYZ(r, lon, lat)
     pts = np.array([x, y, z])
 
     return pts
 
-def make_mesh_sizing_function(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name):
+def rescale_to_surface(pts, r, ellipticity):
+
+    r_pts = np.linalg.norm(pts, axis = 1)
+    if ellipticity is None:
+
+        scale_factor = r/r_pts
+    
+    else:
+        
+        r_h_pts = np.linalg.norm(pts[:, 0:2], axis = 1) 
+        theta_pts = np.arctan2(r_h_pts, pts[:, -1])
+        cos_theta_pts = np.cos(theta_pts)
+    
+        r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
+        scale_factor = r/r_from_theta_pts
+    #
+    pts = pts*scale_factor[:, np.newaxis]
+
+    return pts
+
+def create_ellipsoid_shell(geom, mesh_size, r, ellipticity):
+
+    # Define the three semi-major axes of the ellipsoid along the
+    # x-, y- and z- axes.
+    if ellipticity is None:
+
+        # Spherical case: Three axes are the same.
+        r_x = r
+        r_y = r_x
+        r_z = r_x
+
+    else:
+
+        # Ellipsoidal case: Axes in the equatorial plane (x- and y- axes)
+        # are greater than spherical radius, polar axis (z-axis) is
+        # less.
+        r_x = r*(1.0 + (ellipticity/3.0))
+        r_y = r_x 
+        r_z = r*(1.0 - ((2.0*ellipticity)/3.0))
+
+    # Add the ellipsoidal surface.
+    ellipsoid_shell = geom.add_ellipsoid([0.0, 0.0, 0.0], [r_x, r_y, r_z], mesh_size = mesh_size)
+
+    return ellipsoid_shell
+
+def make_mesh_sizing_function_spherical(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
@@ -625,7 +1193,475 @@ def make_mesh_sizing_function(subdir_out, tet_max_vol, tet_min_max_edge_length_r
 
     return
 
-def make_spherical_poly_file(pts_cmb, pts_llsvp_top, pts_icb, pts_srf, tri_cmb, tri_llsvp_top, quad_llsvp_sides, tri_icb, tri_srf, pts_regions, subdir_out, name):
+def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
+
+    r_ellipticity_profile = ellipticity_data[:, 0]
+    r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+    ellipticity_profile = ellipticity_data[:, 1]
+
+    # Determine the mesh size on the CMB sphere. 
+    mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
+    #mesh_size_min = mesh_size_min/3.0
+    #mesh_size_min = 3.0*mesh_size_min
+    mesh_size_max = tet_min_max_edge_length_ratio*mesh_size_min
+
+    #mesh_size_maxima = mesh_size_maxima/3.0
+
+    # Set output file for mesh points. 
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
+    #
+    #name = 'spheres'
+    path_node           = os.path.join(subdir_out, '{:}.b.node'.format(name))
+    path_ele            = os.path.join(subdir_out, '{:}.b.ele'.format(name))
+    path_edge_length    = os.path.join(subdir_out, '{:}.b.mtr'.format(name))
+
+    # Load mesh points if already exist.
+    path_list = [path_node, path_ele, path_edge_length]
+    files_exist = all([os.path.exists(path_) for path_ in path_list])
+
+    if files_exist:
+
+        print('Mesh sizing files already exist, skipping.')
+        return
+
+    # Define the spherical radii of spheres in the mesh sizing function, increasing 
+    # from the centre.
+    r_discons = model['r'][discon_lists['all']]
+    r_discons_with_zero = np.insert(r_discons, 0, 0.0)
+    n_discons = len(r_discons)
+    n_shells = 2*n_discons + 1
+    r_shells = np.zeros(n_shells)
+    for i in range(n_discons):
+
+        r_shells[2*i] = r_discons_with_zero[i] + (r_discons_with_zero[i + 1] - r_discons_with_zero[i])/2.0
+        r_shells[(2*i) + 1] = r_discons_with_zero[i + 1]
+
+    r_shells[-1] = 1.05*r_shells[-2]
+
+    # Calculate the gradient in mesh size with radial coordinate.
+    r_gap_max = np.max(np.diff(r_shells))
+
+    mesh_size_range = (mesh_size_max - mesh_size_min)
+    mesh_size_gradient = mesh_size_range/r_gap_max
+
+    mesh_size_list = np.zeros(n_shells)
+    for i in range(n_discons):
+        
+        mesh_size_mid = (r_shells[(2*i) + 1] - r_shells[(2*i)])*mesh_size_gradient
+        mesh_size_list[(2*i)] = mesh_size_mid
+
+    mesh_size_list = mesh_size_list + mesh_size_min
+
+    for i in range(n_discons):
+        
+        if mesh_size_list[2*i + 1] > mesh_size_maxima[i]:
+
+            mesh_size_list[2*i + 1] = mesh_size_maxima[i]
+
+        if mesh_size_list[2*i] > mesh_size_maxima[i]:
+
+            mesh_size_list[2*i] = mesh_size_maxima[i]
+
+    mesh_size_list[-1] = mesh_size_list[-2]
+
+    #import matplotlib.pyplot as plt
+    #fig = plt.figure()
+    #ax =  plt.gca()
+
+    #ax.plot(r_shells, mesh_size_list)
+
+    #plt.show()
+
+    #sys.exit()
+
+    # Find the ellipticity of each of the shells.
+    ellipticity_list = np.interp(r_shells, r_ellipticity_profile, ellipticity_profile)
+    
+    # Create a unit sphere for each of the concentric shells of the mesh sizing function.
+    n_shells = len(r_shells)
+    mesh_size_unit = 0.3
+    pts_unit_list = []
+
+    for i in range(n_shells):
+
+        pts_unit, tri_unit = build_ellipsoid(None, 1.0, mesh_size_unit, ellipticity_list[i]) 
+        #n_pts_unit = pts_unit.shape[1]
+
+        pts_unit_list.append(pts_unit)
+
+    # Start with a single point at the centre.
+    pts = np.atleast_2d([0.0, 0.0, 0.0]).T
+    mesh_size = np.atleast_1d(mesh_size_min)
+
+    # Add points from the concentric spheres.
+    for i in range(n_shells):
+
+        pts_shell = pts_unit_list[i]*r_shells[i]
+        n_pts_unit = pts_unit_list[i].shape[1]
+        mesh_size_shell = (np.zeros(n_pts_unit) + 1.0)*mesh_size_list[i]
+
+        pts = np.append(pts, pts_shell, axis = 1)
+        mesh_size = np.append(mesh_size, mesh_size_shell)
+
+    # Tetrahedralise the points.
+    tri_obj = Delaunay(pts.T)
+    tri = tri_obj.simplices.T
+    tri = tri + 1 # Convert to 1-based indexing.
+
+    # Get info.
+    n_pts = pts.shape[1]
+    n_tri = tri.shape[1]
+
+    # Save the node file.
+    print('Saving to {:}'.format(path_node))
+    with open(path_node, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d} {:>12d} {:>12d}\n'.format(n_pts, 3, 0, 0))
+
+        for i in range(n_pts):
+
+            out_id.write('{:>12d} {:>12.5e} {:>12.5e} {:12.5e}\n'.format(i + 1, pts[0, i], pts[1, i], pts[2, i]))
+
+    # Save the tetrahedral element file.
+    print('Saving to {:}'.format(path_ele))
+    with open(path_ele, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d} {:>12d}\n'.format(n_tri, 4, 0))
+
+        for i in range(n_tri):
+
+            out_id.write('{:>12d} {:>12d} {:>12d} {:>12d} {:>12d}\n'.format(i + 1, tri[0, i], tri[1, i], tri[2, i], tri[3, i]))
+
+    # Save the edge length file.
+    print('Saving to {:}'.format(path_edge_length))
+    with open(path_edge_length, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d}\n'.format(n_pts, 1))
+
+        for i in range(n_pts):
+
+            out_id.write('{:>12.5e}\n'.format(mesh_size[i]))
+
+    return
+
+def make_mesh_sizing_function_ellipsoidal_old(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name, ellipticity_data):
+
+    r_ellipticity_profile = ellipticity_data[:, 0]
+    r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+    ellipticity_profile = ellipticity_data[:, 1]
+
+    # Determine the mesh size on the CMB sphere. 
+    mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
+    #mesh_size_min = 3.0*mesh_size_min
+    mesh_size_max = tet_min_max_edge_length_ratio*mesh_size_min
+
+    # Set output file for mesh points. 
+    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
+    #
+    #name = 'spheres'
+    path_node           = os.path.join(subdir_out, '{:}.b.node'.format(name))
+    path_ele            = os.path.join(subdir_out, '{:}.b.ele'.format(name))
+    path_edge_length    = os.path.join(subdir_out, '{:}.b.mtr'.format(name))
+
+    # Load mesh points if already exist.
+    path_list = [path_node, path_ele, path_edge_length]
+    files_exist = all([os.path.exists(path_) for path_ in path_list])
+
+    if files_exist:
+
+        print('Mesh sizing files already exist, skipping.')
+        return
+
+    # Define the spherical radii of spheres in the mesh sizing function, increasing 
+    # from the centre.
+    r_list = np.array([ r_icb/2.0, r_icb, (r_icb + r_cmb)/2.0, r_cmb,
+                        (r_cmb + r_srf)/2.0, r_srf, r_srf*1.05])
+
+    # Calculate the gradient in mesh size with radial coordinate.
+    r_gap_max = r_srf - r_cmb
+    mesh_size_range = (mesh_size_max - mesh_size_min)
+    mesh_size_gradient = mesh_size_range/r_gap_max
+
+    # Create mesh sizing function.
+    mesh_size_list = np.array([
+        mesh_size_gradient*(r_icb -   0.0)*0.5,   0.0,
+        mesh_size_gradient*(r_cmb - r_icb)*0.5,   0.0,
+        mesh_size_gradient*(r_srf - r_cmb)*0.5,   0.0,
+        0.0])
+    mesh_size_list = mesh_size_list + mesh_size_min
+
+    # Find the ellipticity of each of the shells.
+    ellipticity_list = np.interp(r_list, r_ellipticity_profile, ellipticity_profile)
+    
+    # Create a unit sphere for each of the concentric shells of the mesh sizing function.
+    n_sphere = len(r_list)
+    mesh_size_unit = 0.3
+    pts_unit_list = []
+
+    for i in range(n_sphere):
+
+        pts_unit, tri_unit = build_ellipsoid(None, 1.0, mesh_size_unit, ellipticity_list[i]) 
+        #n_pts_unit = pts_unit.shape[1]
+
+        pts_unit_list.append(pts_unit)
+
+    # Start with a single point at the centre.
+    pts = np.atleast_2d([0.0, 0.0, 0.0]).T
+    mesh_size = np.atleast_1d(mesh_size_min)
+
+    # Add points from the concentric spheres.
+    for i in range(n_sphere):
+
+        pts_sphere = pts_unit_list[i]*r_list[i]
+        n_pts_unit = pts_unit_list[i].shape[1]
+        mesh_size_sphere = (np.zeros(n_pts_unit) + 1.0)*mesh_size_list[i]
+
+        pts = np.append(pts, pts_sphere, axis = 1)
+        mesh_size = np.append(mesh_size, mesh_size_sphere)
+
+    # Tetrahedralise the points.
+    tri_obj = Delaunay(pts.T)
+    tri = tri_obj.simplices.T
+    tri = tri + 1 # Convert to 1-based indexing.
+
+    # Get info.
+    n_pts = pts.shape[1]
+    n_tri = tri.shape[1]
+
+    # Save the node file.
+    print('Saving to {:}'.format(path_node))
+    with open(path_node, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d} {:>12d} {:>12d}\n'.format(n_pts, 3, 0, 0))
+
+        for i in range(n_pts):
+
+            out_id.write('{:>12d} {:>12.5e} {:>12.5e} {:12.5e}\n'.format(i + 1, pts[0, i], pts[1, i], pts[2, i]))
+
+    # Save the tetrahedral element file.
+    print('Saving to {:}'.format(path_ele))
+    with open(path_ele, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d} {:>12d}\n'.format(n_tri, 4, 0))
+
+        for i in range(n_tri):
+
+            out_id.write('{:>12d} {:>12d} {:>12d} {:>12d} {:>12d}\n'.format(i + 1, tri[0, i], tri[1, i], tri[2, i], tri[3, i]))
+
+    # Save the edge length file.
+    print('Saving to {:}'.format(path_edge_length))
+    with open(path_edge_length, 'w') as out_id:
+
+        out_id.write('{:>12d} {:>12d}\n'.format(n_pts, 1))
+
+        for i in range(n_pts):
+
+            out_id.write('{:>12.5e}\n'.format(mesh_size[i]))
+
+    return
+
+def make_spherical_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres, tri_llsvp_top, quad_llsvp_sides, pts_regions, subdir_out, name):
+    '''
+    See section 5.2.2 of the TetGen manual for the specification of the .poly
+    file.
+    '''
+
+    # Define output path.
+    #name = 'spheres'
+    path_poly = os.path.join(subdir_out, '{:}.poly'.format(name))
+    path_tetgen_ele = os.path.join(subdir_out, '{:}.1.ele'.format(name))
+
+    # Merge point lists.
+    pts = np.concatenate([*pts_list_spheres, pts_llsvp_top], axis = 1)
+
+    # Get information about mesh.
+    n_dim = pts.shape[0]
+    n_nodes = pts.shape[1]
+    #n_tri = tri.shape[1]
+    n_tri_spheres_list = [tri_i.shape[1] for tri_i in tri_list_spheres]
+    n_tri_spheres = sum(n_tri_spheres_list)
+    n_tri_llsvp_top = tri_llsvp_top.shape[1]
+    n_quad_llsvp_sides = quad_llsvp_sides.shape[1]
+    n_facets = n_tri_spheres + n_tri_llsvp_top + n_quad_llsvp_sides
+    #
+    n_regions = pts_regions.shape[1]
+
+    # Shift from 0-based to 1-based indexing.
+    n_spheres = len(tri_list_spheres)
+    for i in range(n_spheres):
+        tri_list_spheres[i] = tri_list_spheres[i] + 1
+    tri_llsvp_top = tri_llsvp_top + 1
+    quad_llsvp_sides = quad_llsvp_sides + 1
+    
+    # Header lines for part one: Node list.
+    comments_1a = ['# Part 1 - node list', '# node count, 3 dim, no attribute, no boundary marker']
+    comment_1b = '# Node index, node coordinates'
+    header_1 = '{:>8d}{:>8d}{:>8d}{:>8d}'.format(n_nodes, n_dim, 0, 0)
+    header_and_comments_1 = [*comments_1a, header_1, comment_1b]
+
+    # Header lines for part two: Facet list.
+    comments_2a = ['# Part 2 - facet list', '# facet count, no boundary marker']
+    #header_2 = '{:>8d}{:>8d}'.format(n_tri, 0)
+    header_2 = '{:>8d}{:>8d}'.format(n_facets, 0)
+    comment_2b = '# facets'
+    header_and_comments_2 = [*comments_2a, header_2, comment_2b]
+
+    # Lines for parts 3 and 4 (hole and region lists).
+    comment_3 = '# Part 3 - hole list'
+    header_3 = '{:>8d}'.format(0)
+    #
+    comment_4 = '# Part 4 - region list'
+    header_4 = '{:>8d}'.format(n_regions)
+    #
+    header_and_comments_3 = [comment_3, header_3]
+    header_and_comments_4 = [comment_4, header_4]
+
+    # Write the file.
+    print('Writing .poly file {:}'.format(path_poly))
+    with open(path_poly, 'w') as out_id:
+
+        # Write header lines for part 1.
+        for line in header_and_comments_1: 
+
+            out_id.write('{:}\n'.format(line))
+        
+        i_pts = 0
+        for j in range(n_spheres):
+
+            n_nodes_j = pts_list_spheres[j].shape[1]
+            out_id.write('# Nodes of shell {:>d}\n'.format(j))
+
+            # Write the node list for this shell. 
+            for i in range(n_nodes_j):
+
+                # Note: Write (i + 1) instead of (i) because of 1-based indexing.
+                out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e}\n'.format(i_pts + 1, pts_list_spheres[j][0, i], pts_list_spheres[j][1, i], pts_list_spheres[j][2, i]))
+
+                i_pts = i_pts + 1
+
+        n_nodes_llsvp_top = pts_llsvp_top.shape[1]
+        out_id.write('# Nodes of top of LLSVP.\n'.format(j))
+
+        # Write the node list for this shell. 
+        for i in range(n_nodes_llsvp_top):
+
+            # Note: Write (i + 1) instead of (i) because of 1-based indexing.
+            out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e}\n'.format(i_pts + 1, pts_llsvp_top[0, i], pts_llsvp_top[1, i], pts_llsvp_top[2, i]))
+
+            i_pts = i_pts + 1
+
+        # Blank line before part 2.
+        out_id.write('\n')
+
+        # Write header lines for part 2.
+        for line in header_and_comments_2:
+
+            out_id.write('{:}\n'.format(line))
+
+        # Write the facet list for part 2.
+        for j in range(n_spheres):
+
+            out_id.write('# Facets (triangles) of shell {:>d}.\n'.format(j))
+            n_tri_j = tri_list_spheres[j].shape[1]
+
+            for i in range(n_tri_j):
+                
+                # Write '1' to indicate each facet is a single triangle.
+                out_id.write('{:>8d}\n'.format(1))
+
+                # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
+                # and i0, i1, i2 are the indices of the vertices of the triangle.
+                out_id.write('{:>8d} {:>8d} {:>8d} {:>8d}\n'.format(3, tri_list_spheres[j][0, i], tri_list_spheres[j][1, i], tri_list_spheres[j][2, i]))
+
+        ## First: Facets of the CMB.
+        ## Comment line.
+        #out_id.write('# Facets (triangles) of CMB.\n')
+        ##
+        #for i in range(n_tri_cmb):
+
+        #    # Write '1' to indicate each facet is a single triangle.
+        #    out_id.write('{:>8d}\n'.format(1))
+
+        #    # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
+        #    # and i0, i1, i2 are the indices of the vertices of the triangle.
+        #    out_id.write('{:>8d} {:>8d} {:>8d} {:>8d}\n'.format(3, tri_cmb[0, i], tri_cmb[1, i], tri_cmb[2, i]))
+
+        # Second: Facets of the upper surface of the LLSVP. 
+        # Comment line.
+        out_id.write('# Facets (triangles) of upper surface of LLSVP.\n')
+        #
+        for i in range(n_tri_llsvp_top):
+
+            # Write '1' to indicate each facet is a single triangle.
+            out_id.write('{:>8d}\n'.format(1))
+
+            # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
+            # and i0, i1, i2 are the indices of the vertices of the triangle.
+            out_id.write('{:>8d} {:>8d} {:>8d} {:>8d}\n'.format(3, tri_llsvp_top[0, i], tri_llsvp_top[1, i], tri_llsvp_top[2, i]))
+
+        # Third: Sides of the LLSVP.
+        # Comment line.
+        out_id.write('# Facets (quadrilaterals) of vertical sides of the LLSVP.\n')
+        #
+        for i in range(n_quad_llsvp_sides):
+
+            # Write '1' to indicate each facet is a single quadrilateral. 
+            out_id.write('{:>8d}\n'.format(1))
+
+            # Write 4, i0, i1, i2, i3 where 4 is the number of vertices of the quadrilateral,
+            # and i0, i1, i2, i3 are the indices of the vertices of the quadrilateral.
+            out_id.write('{:>8d} {:>8d} {:>8d} {:>8d} {:>8d}\n'.format(4, quad_llsvp_sides[0, i], quad_llsvp_sides[1, i], quad_llsvp_sides[2, i], quad_llsvp_sides[3, i]))
+
+        ## Fourth: Facets of the ICB.
+        ## Comment line.
+        #out_id.write('# Facets (triangles) of ICB.\n')
+        ##
+        #for i in range(n_tri_icb):
+
+        #    # Write '1' to indicate each facet is a single triangle.
+        #    out_id.write('{:>8d}\n'.format(1))
+
+        #    # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
+        #    # and i0, i1, i2 are the indices of the vertices of the triangle.
+        #    out_id.write('{:>8d} {:>8d} {:>8d} {:>8d}\n'.format(3, tri_icb[0, i], tri_icb[1, i], tri_icb[2, i]))
+
+        ## Fifth: Facets of the surface.
+        ## Comment line.
+        #out_id.write('# Facets (triangles) of outer surface.\n')
+        ##
+        #for i in range(n_tri_srf):
+
+        #    # Write '1' to indicate each facet is a single triangle.
+        #    out_id.write('{:>8d}\n'.format(1))
+
+        #    # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
+        #    # and i0, i1, i2 are the indices of the vertices of the triangle.
+        #    out_id.write('{:>8d} {:>8d} {:>8d} {:>8d}\n'.format(3, tri_srf[0, i], tri_srf[1, i], tri_srf[2, i]))
+
+        # Blank line before part 3.
+        out_id.write('\n')
+
+        # Write part 3.
+        for line in header_and_comments_3:
+
+            out_id.write('{:}\n'.format(line))
+
+        # Blank line before part 4.
+        out_id.write('\n')
+
+        # Write part 4.
+        for line in header_and_comments_4:
+
+            out_id.write('{:}\n'.format(line))
+
+        for i in range(n_regions):
+
+            out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e} {:>8d}\n'.format(i + 1,
+                pts_regions[0, i], pts_regions[1, i], pts_regions[2, i], i + 1))
+
+    return path_poly, path_tetgen_ele
+
+def make_spherical_poly_file_old(pts_cmb, pts_llsvp_top, pts_icb, pts_srf, tri_cmb, tri_llsvp_top, quad_llsvp_sides, tri_icb, tri_srf, pts_regions, subdir_out, name):
     '''
     See section 5.2.2 of the TetGen manual for the specification of the .poly
     file.
@@ -835,13 +1871,297 @@ def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
 
     #command = 'tetgen -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
     command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
+    #command = 'tetgen -k -A -pmnYCVFO5/7 -a {:>7.2f} {:}'.format(tet_max_vol, path_poly)
     print(command)
     os.system(command)
 
     return 
 
 # Assigning parameters at mesh points. ----------------------------------------
-def assign_parameters(dir_input, subdir_out, name, order):
+def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, ellipticity_data):
+
+    # Define file paths.
+    path_node   = os.path.join(subdir_out, '{:}.1.node'.format(name))
+    path_ele    = os.path.join(subdir_out, '{:}.1.ele'.format(name))
+    path_neigh  = os.path.join(subdir_out, '{:}.1.neigh'.format(name))
+
+    # Read the nodes and elements (currently no need to load neighbours).
+    nodes, tets, tet_labels, neighs = load_tetgen_mesh(path_node, path_ele, path_neigh) 
+    
+    # Get the tetrahedron information (number of points, geometric factors
+    # defining coordinates of points).
+    tet_info = get_tet_info(order)
+
+    # Get the coordinates of each point in the tetrahedral mesh (including
+    # higher-order points if requested).
+    nodal_pts, links = get_nodal_points(nodes, tets, tet_info)
+
+    # Create the output arrays.
+    n_tets = tets.shape[1]
+    n_nodes_per_tet = nodal_pts.shape[1]
+    #
+    v_p = np.zeros((n_nodes_per_tet, n_tets))
+    v_s = np.zeros((n_nodes_per_tet, n_tets))
+    rho = np.zeros((n_nodes_per_tet, n_tets))
+    
+    ## Load the input model.
+    #r_mod, v_p_mod, v_s_mod, rho_mod, i_icb, i_cmb, i_inner_core,       \
+    #i_outer_core, i_mantle =                                            \
+    #        load_radial_model(dir_input)
+
+    i_discon_with_zero = np.insert(discon_lists['all'], 0, -1)
+    
+    #label_list = [1, 2, 3, 4]
+    #i_list = [i_inner_core, i_outer_core, i_mantle, i_mantle]
+    #for j in range(4):
+
+    # Write a summary of the number of nodes and tetrahedra in each region.
+    file_summary = 'mesh_info.txt' 
+    path_summary = os.path.join(subdir_out, file_summary)
+    print('Writing mesh summary: {:}'.format(path_summary))
+    with open(path_summary, 'w') as out_id:
+       
+        out_id.write('{:>6} {:>10} {:>10}\n'.format('Region', 'Nodes', 'Tetrahedra'))
+        for j in range(discon_lists['n_discons'] + 1):
+
+            # Find the tetrahedron in the specified region.
+            #label = label_list[j]
+            label = j + 1
+            k = np.where(tet_labels == label)[0]
+            n_tets_k = len(k)
+            n_pts_k = len(np.unique(tets[:, k].flatten()))
+
+            out_id.write('{:>6d} {:>10d} {:>10d}\n'.format(label, n_pts_k, n_tets_k))
+
+        n_pts = nodes.shape[1]
+        out_id.write('{:>6} {:>10d} {:>10d}\n'.format('All', n_pts, n_tets))
+
+    # Interpolate the radial model at the nodal points.
+    # Loop over the discontinuities and the LLSVP region (n_discons + 1).
+    label_llsvp = discon_lists['n_discons'] + 1
+    for j in range(discon_lists['n_discons'] + 1):
+
+        # Find the tetrahedron in the specified region.
+        #label = label_list[j]
+        label = j + 1
+        k = np.where(tet_labels == label)[0]
+        nodal_pts_region = nodal_pts[:, :, k]
+
+        if ellipticity_data is None:
+
+            r_pts_region = np.linalg.norm(nodal_pts_region, axis = 0)
+
+        else:
+            
+            r_ellipticity_profile = ellipticity_data[:, 0]*1.0E-3
+            ellipticity_profile = ellipticity_data[:, 1]
+            r_pts_region, _ = XYZ_to_REll(*nodal_pts_region, r_ellipticity_profile, ellipticity_profile)
+
+        # Extract the relevant portion of the reference model.
+        if label == label_llsvp:
+
+            i0 = i_discon_with_zero[discon_lists['j_cmb'] + 1] + 1
+            i1 = i_discon_with_zero[discon_lists['j_cmb'] + 2] + 1
+
+        else:
+
+            i0 = i_discon_with_zero[j] + 1
+            i1 = i_discon_with_zero[j + 1] + 1
+        #
+        r_mod_region = model['r'][i0 : i1]
+        v_s_mod_region = model['v_s'][i0 : i1]
+        v_p_mod_region = model['v_p'][i0 : i1]
+        rho_mod_region = model['rho'][i0 : i1]
+
+        #r_mod_region    = r_mod[i_list[j]]
+        #v_p_mod_region  = v_p_mod[i_list[j]]
+        #v_s_mod_region  = v_s_mod[i_list[j]]
+        #rho_mod_region  = rho_mod[i_list[j]]
+
+        # Interpolate at the coordinates of the region using the reference
+        # model.
+        v_p_pts_region = np.interp(r_pts_region, r_mod_region, v_p_mod_region)
+        v_s_pts_region = np.interp(r_pts_region, r_mod_region, v_s_mod_region)
+        rho_pts_region = np.interp(r_pts_region, r_mod_region, rho_mod_region)
+
+        # Store the anomalies for this region in the global array.
+        v_p[:, k] = v_p_pts_region
+        v_s[:, k] = v_s_pts_region
+        rho[:, k] = rho_pts_region
+
+    # Apply the LLSVP anomalies.
+    # First, create copies of the arrays with no anomalies.
+    v_p_no_anomaly = v_p.copy()
+    v_s_no_anomaly = v_s.copy()
+    rho_no_anomaly = rho.copy()
+    #
+    v_p_anomaly = -0.016
+    v_s_anomaly = -0.040
+    rho_anomaly = +0.010
+    #
+    k = np.where(tet_labels == label_llsvp)[0]
+    v_p[:, k] = v_p[:, k]*(1.0 + v_p_anomaly)
+    v_s[:, k] = v_s[:, k]*(1.0 + v_s_anomaly)
+    rho[:, k] = rho[:, k]*(1.0 + rho_anomaly)
+
+    # Loop over each variable and save as a binary file.
+    var_str_list = ['vp', 'vs', 'rho']
+    arr_list_without_anomaly = [v_p_no_anomaly, v_s_no_anomaly, rho_no_anomaly]
+    arr_list_with_anomaly    = [v_p, v_s, rho]
+    arr_list = [arr_list_with_anomaly, arr_list_without_anomaly]
+    anomaly_str_list = ['with_anomaly', 'without_anomaly']
+    for i in range(3):
+
+        for j in range(2):
+
+            # Get file path.
+            file_ = '{:}.1_{:}_pod_{:1d}_true_{:}.dat'.format(name, var_str_list[i], order, anomaly_str_list[j]) 
+            path = os.path.join(subdir_out, file_)
+
+            # Save as a binary file.
+            print('Saving to {:}.'.format(path))
+            with open(path, 'w') as out_id:
+
+                arr_list[j][i].T.tofile(path)
+
+    # Save the other input files in the binary format required by NormalModes.
+    # First, save mesh.header file, which simply lists the number of
+    # tetrahedra and the number of nodes.
+    n_pts = nodes.shape[1]
+    file_mesh_header = '{:}.1_mesh.header'.format(name)
+    path_mesh_header = os.path.join(subdir_out, file_mesh_header) 
+    print('Saving to {:}'.format(path_mesh_header))
+    with open(path_mesh_header, 'w') as out_id:
+
+        out_id.write('{:d} {:d}'.format(n_tets, n_pts))
+
+    # Second, save the ele.dat file, which stores the tetrahedron indices
+    # in binary format.
+    file_ele_dat = '{:}.1_ele.dat'.format(name)
+    path_ele_dat = os.path.join(subdir_out, file_ele_dat)
+    print('Saving to {:}'.format(path_ele_dat))
+    tets_int32 = tets.astype(np.int32) # Convert to 32-bit integer.
+    tets_int32 = tets_int32 + 1 # Convert to 1-based indexing.
+    with open(path_ele_dat, 'w') as out_id:
+
+        # Note: Transpose required for correct flattening.
+        (tets_int32.T).tofile(out_id)
+
+    # Second, save the node.dat file, which stores the node coordinates.
+    # in binary format.
+    file_node_dat = '{:}.1_node.dat'.format(name)
+    path_node_dat = os.path.join(subdir_out, file_node_dat)
+    print('Saving to {:}'.format(path_node_dat))
+    with open(path_node_dat, 'w') as out_id:
+
+        # Note: Transpose required for correct flattening.
+        (nodes.T).tofile(out_id)
+
+    # Second, save the node.dat file, which stores the node coordinates.
+    # in binary format.
+    file_neigh_dat = '{:}.1_neigh.dat'.format(name)
+    path_neigh_dat = os.path.join(subdir_out, file_neigh_dat)
+    print('Saving to {:}'.format(path_neigh_dat))
+    neighs_int32 = neighs.astype(np.int32) # Convert to 32-bit integer.
+    neighs_int32 = neighs_int32 + 1 # Convert to 1-based indexing.
+    with open(path_neigh_dat, 'w') as out_id:
+
+        # Note: Transpose required for correct flattening.
+        (neighs_int32.T).tofile(out_id)
+
+    # Finally, save as a VTK file (only for visualisation).
+    # Note: No file suffix is added because PyEVTK automatically adds the
+    # suffix .vtu.
+    path_vtk = os.path.join(subdir_out, '{:}'.format(name))
+    save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho)
+
+    # Create symbolic links.
+    dir_with_anomaly = os.path.join(subdir_out, 'with_anomaly')
+    dir_without_anomaly = os.path.join(subdir_out, 'without_anomaly')
+    for dir_ in [dir_with_anomaly, dir_without_anomaly]:
+
+        mkdir_if_not_exist(dir_)
+
+    current_dir = os.getcwd()
+
+    os.chdir(dir_with_anomaly)
+
+    rel_path_node_dat       = os.path.join('..', file_node_dat)
+    rel_path_ele_dat        = os.path.join('..', file_ele_dat)
+    rel_path_neigh_dat      = os.path.join('..', file_neigh_dat)
+    rel_path_mesh_header    = os.path.join('..', file_mesh_header)
+
+    path_anomaly_symmesh_header        = os.path.join('..', file_mesh_header)
+    path_anomaly_symlink_node_dat   = os.path.join('..', file_node_dat)
+    path_anomaly_symlink_ele_dat    = os.path.join('..', file_ele_dat)
+    path_anomaly_symlink_neigh_dat  = os.path.join('..', file_neigh_dat)
+    #
+    file_symlink_rho_dat = '{:}.1_rho_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_p_dat = '{:}.1_vp_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_s_dat = '{:}.1_vs_pod_{:1d}_true.dat'.format(name, order)
+    #path_anomaly_symlink_rho_dat = os.path.join('..', file_symlink_rho_dat)
+    #path_anomaly_symlink_v_p_dat = os.path.join('..', file_symlink_v_p_dat)
+    #path_anomaly_symlink_v_s_dat = os.path.join('..', file_symlink_v_s_dat)
+    #
+    file_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    #
+    rel_path_anomaly_rho_dat = os.path.join('..', file_anomaly_rho_dat)
+    rel_path_anomaly_v_p_dat = os.path.join('..', file_anomaly_v_p_dat)
+    rel_path_anomaly_v_s_dat = os.path.join('..', file_anomaly_v_s_dat)
+    #
+    file_no_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    #
+    rel_path_no_anomaly_rho_dat = os.path.join('..', file_no_anomaly_rho_dat)
+    rel_path_no_anomaly_v_p_dat = os.path.join('..', file_no_anomaly_v_p_dat)
+    rel_path_no_anomaly_v_s_dat = os.path.join('..', file_no_anomaly_v_s_dat)
+
+    path_pairs_with_anomaly =\
+                [   [rel_path_node_dat,             file_node_dat], 
+                    [rel_path_ele_dat,              file_ele_dat], 
+                    [rel_path_neigh_dat,            file_neigh_dat],
+                    [rel_path_mesh_header,          file_mesh_header],
+                    [rel_path_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    path_pairs_without_anomaly =\
+                [   [rel_path_node_dat,                 file_node_dat], 
+                    [rel_path_ele_dat,                  file_ele_dat], 
+                    [rel_path_neigh_dat,                file_neigh_dat],
+                    [rel_path_mesh_header,              file_mesh_header],
+                    [rel_path_no_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_no_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_no_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    for path_pair in path_pairs_with_anomaly:
+
+        path_true = path_pair[0]
+        path_symlink = path_pair[1]
+
+        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
+        print(command)
+        os.system(command)
+
+    os.chdir(dir_without_anomaly)
+
+    for path_pair in path_pairs_without_anomaly:
+
+        path_true = path_pair[0]
+        path_symlink = path_pair[1]
+
+        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
+        print(command)
+        os.system(command)
+
+    os.chdir(current_dir)
+
+    return
+
+def assign_parameters_old(dir_input, subdir_out, name, order, ellipticity_data):
 
     # Define file paths.
     path_node   = os.path.join(subdir_out, '{:}.1.node'.format(name))
@@ -881,7 +2201,16 @@ def assign_parameters(dir_input, subdir_out, name, order):
         label = label_list[j]
         k = np.where(tet_labels == label)[0]
         nodal_pts_region = nodal_pts[:, :, k]
-        r_pts_region = np.linalg.norm(nodal_pts_region, axis = 0)
+
+        if ellipticity_data is None:
+
+            r_pts_region = np.linalg.norm(nodal_pts_region, axis = 0)
+
+        else:
+            
+            r_ellipticity_profile = ellipticity_data[:, 0]*1.0E-3
+            ellipticity_profile = ellipticity_data[:, 1]
+            r_pts_region, _ = XYZ_to_REll(*nodal_pts_region, r_ellipticity_profile, ellipticity_profile)
 
         # Extract the relevant portion of the reference model.
         r_mod_region    = r_mod[i_list[j]]
@@ -1189,7 +2518,66 @@ def get_nodal_points(nodes, tets, tet_info):
 
     return nodal_pts, links
 
-def load_radial_model(dir_input, name = 'prem_noocean'):
+def load_radial_model(path_model):
+    
+    # Load the model.
+    model = dict()
+    model['r'], model['rho'], model['v_p'], model['v_s'] = np.loadtxt(path_model).T
+
+    # Find the indices of the discontinuities.
+    i_discon = dict()
+    r_diffs = np.abs(np.diff(model['r']))
+    tolerance = 1.0E-10
+    condition_discon_r = (r_diffs < tolerance)
+    keys = ['rho', 'v_p', 'v_s']
+    for key in keys:
+        
+        abs_diff = np.abs(np.diff(model[key]))
+        condition_discon_key = (abs_diff > tolerance)
+        
+        i_discon[key] = np.where((condition_discon_r) & (condition_discon_key))[0] 
+
+    # Merge the discontinuity lists.
+    i_discon_merge = []
+    for key in keys:
+
+        i_discon_merge = i_discon_merge + list(i_discon[key])
+
+    i_discon_merge = np.sort(np.unique(i_discon_merge)) 
+    
+    # Also include the outer point.
+    n_pts = len(model['r'])
+    i_discon_merge = np.append(i_discon_merge, n_pts - 1)
+
+    # Find the indices of the fluid outer core.
+    i_fluid = np.where(model['v_s'] < tolerance)[0]
+    i_cmb = i_fluid[-1] + 1 # Index of lowermost layer in mantle.
+    i_icb = i_fluid[0] # Index of lowermost layer in outer core.
+    ##
+    #n_layers = len(r)
+    #i_inner_core = np.array(list(range(0, i_icb)), dtype = np.int)
+    #i_outer_core = np.array(list(range(i_icb, i_cmb)), dtype = np.int)
+    #i_mantle = np.array(list(range(i_cmb, n_layers)), dtype = np.int)
+
+    # Find which discontinuity in the list is the CMB.
+    j_discon_cmb = np.where((i_discon_merge == (i_cmb - 1)))[0][0]
+    i_discon_cmb = (i_cmb - 1)
+    i_discon_core = i_discon_merge[0 : j_discon_cmb]
+    i_discon_mantle = i_discon_merge[j_discon_cmb + 1 : ]
+
+    # Create dictionary.
+    discon_lists = dict()
+    discon_lists['all'] = i_discon_merge
+    discon_lists['core'] = i_discon_core
+    discon_lists['mantle'] = i_discon_mantle
+    discon_lists['cmb'] = i_discon_merge[j_discon_cmb]
+    discon_lists['j_cmb'] = j_discon_cmb
+    n_discons = len(i_discon_merge)
+    discon_lists['n_discons'] = n_discons
+
+    return model, discon_lists
+
+def load_radial_model_old(dir_input, name = 'prem_noocean'):
 
     # Load the model.
     path_model = os.path.join(dir_input, '{:}.txt'.format(name))
@@ -1303,39 +2691,88 @@ def main():
         dir_output = in_id.readline().strip()
         tet_max_vol = float(in_id.readline())
         order = int(in_id.readline())
+        is_ellipsoidal = bool(in_id.readline())
 
+    ## Load radius information.
+    #path_input = os.path.join(dir_input, 'radii.txt')
+    #with open(path_input, 'r') as in_id:
 
-    
-    # Load radius information.
-    path_input = os.path.join(dir_input, 'radii.txt')
-    with open(path_input, 'r') as in_id:
+    #    r_srf = float(in_id.readline())
+    #    r_cmb = float(in_id.readline())
+    #    r_icb = float(in_id.readline())
 
-        r_srf = float(in_id.readline())
-        r_cmb = float(in_id.readline())
-        r_icb = float(in_id.readline())
+    # Load model information.
+    file_model = 'prem_no_crust_03.0.txt'
+    path_model = os.path.join(dir_input, file_model)
+    model, discon_lists = load_radial_model(path_model)
+
+    # Load ellipticity information.
+    if is_ellipsoidal:
+
+        path_ellipticity = os.path.join(dir_input, 'ellipticity_profile.txt')
+        ellipticity_data = np.loadtxt(path_ellipticity)
+        r_ellipticity, ellipticity = ellipticity_data.T
+        r_ellipticity = r_ellipticity*1.0E-3
+        max_ellipticity = np.max(ellipticity)
+
+    else:
+
+        ellipticity_data = None
+        max_ellipticity = 0.0
+
+    if max_ellipticity == 0.0:
+
+        ellipticity_str = 'inf'
+
+    else:
+
+        ellipticity_str = '{:>3d}'.format(int(round(1.0/max_ellipticity)))
 
     # Set the output directory.
     # The name includes the mesh size on the CMB sphere. 
-    #mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
+    mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
     #subdir_out = os.path.join(dir_output, 'sphere_{:>06.1f}'.format(mesh_size))
-    subdir_out = dir_output
+    name_run = 'prem_{:>06.1f}_{:1d}_{:}'.format(mesh_size, order, ellipticity_str)
+    #subdir_out = dir_output
+    subdir_out = os.path.join(dir_output, name_run)
     for dir_ in [dir_output, subdir_out]:
         mkdir_if_not_exist(dir_)
 
-    name = 'spheres'
+    name = 'model'
+
+    # Set the largest allowed mesh sizes (km) on each discontinuity.
+    mesh_size_maxima = np.array([
+         500.0, # ICB.
+         500.0, # CMB.
+         370.0, # Base of transition zone (670).
+         180.0, # Top of transition zone (400).
+         140.0, # Base of lithosphere.
+          80.0, # Mid-lithosphere discontinuity.
+          80.0  # Surface.
+        ])
+
+    mesh_size_maxima = 2.0*mesh_size_maxima
+    #mesh_size_maxima = 3.0*mesh_size_maxima
 
     # Make the .poly file, defining polygonal surfaces of regions.
-    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, r_icb, r_cmb, r_srf, name)
+    path_poly, path_tetgen_ele = make_spherical_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
 
     # Make the mesh sizing file (.b.poly), defining mesh size throughout domain.
     tet_min_max_edge_length_ratio = 2.0
-    make_mesh_sizing_function(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name)
+    if ellipticity_data is None:
+
+        raise NotImplementedError('Mesh sizing function not implemented for spherical case with multiple mantle discontinuities.')
+        make_mesh_sizing_function_spherical(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name)
+
+    else:
+        
+        make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
 
     # Tetrahedralise the .poly file, creating the mesh.
     tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name)
 
     # Assign parameters at the mesh points.
-    assign_parameters(dir_input, subdir_out, name, order)
+    assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, ellipticity_data)
 
     return
 
