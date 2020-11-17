@@ -21,9 +21,21 @@ def main():
     with open(path_cluster_input, 'r') as in_id:
 
         tet_max_vol = float(in_id.readline())
+
+    is_ellipsoidal = True
+    if is_ellipsoidal:
+
+        path_ellipticity = os.path.join(dir_cluster_input, 'ellipticity_profile.txt')
+        ellipticity_data = np.loadtxt(path_ellipticity)
+        r_ellipticity, ellipticity = ellipticity_data.T
+        r_ellipticity = r_ellipticity*1.0E-3
+        max_ellipticity = np.max(ellipticity)
         order       = int(in_id.readline())
 
-    max_ellipticity = 0.0
+    else:
+
+        max_ellipticity = 0.0
+
     if max_ellipticity == 0.0:
 
         ellipticity_str = 'inf'
@@ -51,11 +63,13 @@ def main():
         out_id.write('{:>16.12e}\n'.format(tet_max_vol))
         out_id.write('{:>1d}\n'.format(order))
     
-    name_model = 'prem_noocean.txt'
+    #name_model = 'prem_noocean.txt'
+    name_model = 'prem_no_crust_03.0.txt'
     name_outline = 'llsvp_smooth.txt'
     name_radii = 'radii.txt'
+    name_ellipticity = 'ellipticity_profile.txt'
 
-    names = [name_model, name_outline, name_radii]
+    names = [name_model, name_outline, name_radii, name_ellipticity]
     for name in names:
 
         path_source = os.path.join(dir_cluster_input, name)
