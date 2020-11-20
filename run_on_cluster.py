@@ -1,6 +1,8 @@
 import os
 from shutil import copyfile
 
+import numpy as np
+
 def mkdir_if_not_exist(dir_):
 
     if not os.path.exists(dir_):
@@ -21,6 +23,7 @@ def main():
     with open(path_cluster_input, 'r') as in_id:
 
         tet_max_vol = float(in_id.readline())
+        order       = int(in_id.readline())
 
     is_ellipsoidal = True
     if is_ellipsoidal:
@@ -30,7 +33,6 @@ def main():
         r_ellipticity, ellipticity = ellipticity_data.T
         r_ellipticity = r_ellipticity*1.0E-3
         max_ellipticity = np.max(ellipticity)
-        order       = int(in_id.readline())
 
     else:
 
@@ -59,9 +61,12 @@ def main():
     with open(path_input, 'w') as out_id:
 
         out_id.write('{:}\n'.format(dir_input))
-        out_id.write('{:}\n'.format(dir_output))
+        #out_id.write('{:}\n'.format(dir_output))
+        out_id.write('{:}\n'.format(dir_scratch))
+        #out_id.write('{:}\n'.format(dir_run))
         out_id.write('{:>16.12e}\n'.format(tet_max_vol))
         out_id.write('{:>1d}\n'.format(order))
+        out_id.write('{:>1d}\n'.format(int(is_ellipsoidal)))
     
     #name_model = 'prem_noocean.txt'
     name_model = 'prem_no_crust_03.0.txt'
