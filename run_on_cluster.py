@@ -45,14 +45,14 @@ def main():
         ellipticity_str = '{:>3d}'.format(int(round(1.0/max_ellipticity)))
 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    name_run = 'prem_{:>06.1f}_{:1d}_{:}'.format(mesh_size, order, ellipticity_str)
+    name_run = 'prem_{:>06.1f}_{:}'.format(mesh_size, ellipticity_str)
 
     dir_run = os.path.join(dir_scratch, name_run)
     dir_input = os.path.join(dir_run, 'input')
     path_input = os.path.join(dir_input, 'input.txt')
-    dir_output = os.path.join(dir_run, 'output')
+    #dir_output = os.path.join(dir_run, 'output')
 
-    for dir_ in [dir_scratch, dir_run, dir_input, dir_output]:
+    for dir_ in [dir_scratch, dir_run, dir_input]:#, dir_output]:
 
         mkdir_if_not_exist(dir_)
 

@@ -1392,11 +1392,6 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
         v_p_mod_region = model['v_p'][i0 : i1]
         rho_mod_region = model['rho'][i0 : i1]
 
-        #r_mod_region    = r_mod[i_list[j]]
-        #v_p_mod_region  = v_p_mod[i_list[j]]
-        #v_s_mod_region  = v_s_mod[i_list[j]]
-        #rho_mod_region  = rho_mod[i_list[j]]
-
         # Interpolate at the coordinates of the region using the reference
         # model.
         v_p_pts_region = np.interp(r_pts_region, r_mod_region, v_p_mod_region)
@@ -1491,92 +1486,13 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
     # Finally, save as a VTK file (only for visualisation).
     # Note: No file suffix is added because PyEVTK automatically adds the
     # suffix .vtu.
-    path_vtk = os.path.join(subdir_out, '{:}'.format(name))
+    path_vtk = os.path.join(subdir_out, '{:}_pOrd_{:>1d}'.format(name, order))
     save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho)
 
     # Create symbolic links.
-    dir_with_anomaly = os.path.join(subdir_out, 'with_anomaly')
-    dir_without_anomaly = os.path.join(subdir_out, 'without_anomaly')
-    for dir_ in [dir_with_anomaly, dir_without_anomaly]:
-
-        mkdir_if_not_exist(dir_)
-
-    current_dir = os.getcwd()
-
-    os.chdir(dir_with_anomaly)
-
-    rel_path_node_dat       = os.path.join('..', file_node_dat)
-    rel_path_ele_dat        = os.path.join('..', file_ele_dat)
-    rel_path_neigh_dat      = os.path.join('..', file_neigh_dat)
-    rel_path_mesh_header    = os.path.join('..', file_mesh_header)
-
-    path_anomaly_symmesh_header        = os.path.join('..', file_mesh_header)
-    path_anomaly_symlink_node_dat   = os.path.join('..', file_node_dat)
-    path_anomaly_symlink_ele_dat    = os.path.join('..', file_ele_dat)
-    path_anomaly_symlink_neigh_dat  = os.path.join('..', file_neigh_dat)
-    #
-    file_symlink_rho_dat = '{:}.1_rho_pod_{:1d}_true.dat'.format(name, order)
-    file_symlink_v_p_dat = '{:}.1_vp_pod_{:1d}_true.dat'.format(name, order)
-    file_symlink_v_s_dat = '{:}.1_vs_pod_{:1d}_true.dat'.format(name, order)
-    #path_anomaly_symlink_rho_dat = os.path.join('..', file_symlink_rho_dat)
-    #path_anomaly_symlink_v_p_dat = os.path.join('..', file_symlink_v_p_dat)
-    #path_anomaly_symlink_v_s_dat = os.path.join('..', file_symlink_v_s_dat)
-    #
-    file_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
-    file_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
-    file_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
-    #
-    rel_path_anomaly_rho_dat = os.path.join('..', file_anomaly_rho_dat)
-    rel_path_anomaly_v_p_dat = os.path.join('..', file_anomaly_v_p_dat)
-    rel_path_anomaly_v_s_dat = os.path.join('..', file_anomaly_v_s_dat)
-    #
-    file_no_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
-    file_no_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
-    file_no_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
-    #
-    rel_path_no_anomaly_rho_dat = os.path.join('..', file_no_anomaly_rho_dat)
-    rel_path_no_anomaly_v_p_dat = os.path.join('..', file_no_anomaly_v_p_dat)
-    rel_path_no_anomaly_v_s_dat = os.path.join('..', file_no_anomaly_v_s_dat)
-
-    path_pairs_with_anomaly =\
-                [   [rel_path_node_dat,             file_node_dat], 
-                    [rel_path_ele_dat,              file_ele_dat], 
-                    [rel_path_neigh_dat,            file_neigh_dat],
-                    [rel_path_mesh_header,          file_mesh_header],
-                    [rel_path_anomaly_rho_dat,      file_symlink_rho_dat],
-                    [rel_path_anomaly_v_p_dat,      file_symlink_v_p_dat], 
-                    [rel_path_anomaly_v_s_dat,      file_symlink_v_s_dat]]
-
-    path_pairs_without_anomaly =\
-                [   [rel_path_node_dat,                 file_node_dat], 
-                    [rel_path_ele_dat,                  file_ele_dat], 
-                    [rel_path_neigh_dat,                file_neigh_dat],
-                    [rel_path_mesh_header,              file_mesh_header],
-                    [rel_path_no_anomaly_rho_dat,      file_symlink_rho_dat],
-                    [rel_path_no_anomaly_v_p_dat,      file_symlink_v_p_dat], 
-                    [rel_path_no_anomaly_v_s_dat,      file_symlink_v_s_dat]]
-
-    for path_pair in path_pairs_with_anomaly:
-
-        path_true = path_pair[0]
-        path_symlink = path_pair[1]
-
-        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
-        print(command)
-        os.system(command)
-
-    os.chdir(dir_without_anomaly)
-
-    for path_pair in path_pairs_without_anomaly:
-
-        path_true = path_pair[0]
-        path_symlink = path_pair[1]
-
-        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
-        print(command)
-        os.system(command)
-
-    os.chdir(current_dir)
+    # This allows the two models (with/without anomaly) to share their
+    # node files.
+    create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header)
 
     return
 
@@ -1755,6 +1671,98 @@ def load_radial_model(path_model):
 
     return model, discon_lists
 
+def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header):
+
+    #path_anomaly_symmesh_header        = os.path.join('..', file_mesh_header)
+    #path_anomaly_symlink_node_dat   = os.path.join('..', file_node_dat)
+    #path_anomaly_symlink_ele_dat    = os.path.join('..', file_ele_dat)
+    #path_anomaly_symlink_neigh_dat  = os.path.join('..', file_neigh_dat)
+
+    # Define the symlink names for the non-common files.
+    file_symlink_rho_dat = '{:}.1_rho_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_p_dat = '{:}.1_vp_pod_{:1d}_true.dat'.format(name, order)
+    file_symlink_v_s_dat = '{:}.1_vs_pod_{:1d}_true.dat'.format(name, order)
+
+    # Define the common symlink targets.
+    rel_path_node_dat       = os.path.join('../..', file_node_dat)
+    rel_path_ele_dat        = os.path.join('../..', file_ele_dat)
+    rel_path_neigh_dat      = os.path.join('../..', file_neigh_dat)
+    rel_path_mesh_header    = os.path.join('../..', file_mesh_header)
+
+    # Define the symlink targets for the model with anomaly.
+    file_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    file_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_with_anomaly.dat'.format(name, order)
+    #
+    rel_path_anomaly_rho_dat = os.path.join('../..', file_anomaly_rho_dat)
+    rel_path_anomaly_v_p_dat = os.path.join('../..', file_anomaly_v_p_dat)
+    rel_path_anomaly_v_s_dat = os.path.join('../..', file_anomaly_v_s_dat)
+
+    # Define the symlink targets for the model without anomaly.
+    file_no_anomaly_rho_dat = '{:}.1_rho_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_p_dat = '{:}.1_vp_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    file_no_anomaly_v_s_dat = '{:}.1_vs_pod_{:1d}_true_without_anomaly.dat'.format(name, order)
+    #
+    rel_path_no_anomaly_rho_dat = os.path.join('../..', file_no_anomaly_rho_dat)
+    rel_path_no_anomaly_v_p_dat = os.path.join('../..', file_no_anomaly_v_p_dat)
+    rel_path_no_anomaly_v_s_dat = os.path.join('../..', file_no_anomaly_v_s_dat)
+
+    # Pair the symlink targets with the symlink names for the model with
+    # anomaly.
+    path_pairs_with_anomaly =\
+                [   [rel_path_node_dat,             file_node_dat], 
+                    [rel_path_ele_dat,              file_ele_dat], 
+                    [rel_path_neigh_dat,            file_neigh_dat],
+                    [rel_path_mesh_header,          file_mesh_header],
+                    [rel_path_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    # Pair the symlink targets with the symlink names for the model without
+    # anomaly.
+    path_pairs_without_anomaly =\
+                [   [rel_path_node_dat,                 file_node_dat], 
+                    [rel_path_ele_dat,                  file_ele_dat], 
+                    [rel_path_neigh_dat,                file_neigh_dat],
+                    [rel_path_mesh_header,              file_mesh_header],
+                    [rel_path_no_anomaly_rho_dat,      file_symlink_rho_dat],
+                    [rel_path_no_anomaly_v_p_dat,      file_symlink_v_p_dat], 
+                    [rel_path_no_anomaly_v_s_dat,      file_symlink_v_s_dat]]
+
+    # Create the symlinks.
+    dir_pOrder = os.path.join(subdir_out, 'pOrder_{:>1d}'.format(order))
+    mkdir_if_not_exist(dir_pOrder)
+    dir_with_anomaly = os.path.join(dir_pOrder, 'with_anomaly')
+    dir_without_anomaly = os.path.join(dir_pOrder, 'without_anomaly')
+    create_symlinks_cmd(path_pairs_with_anomaly, dir_with_anomaly)
+    create_symlinks_cmd(path_pairs_without_anomaly, dir_without_anomaly)
+
+    return
+
+def create_symlinks_cmd(path_pairs, directory):
+
+    # Record starting directory.
+    start_dir = os.getcwd()
+
+    # Change to symlink directory.
+    mkdir_if_not_exist(directory)
+    os.chdir(directory)
+
+    # Create the symlinks.
+    for path_pair in path_pairs:
+
+        path_true = path_pair[0]
+        path_symlink = path_pair[1]
+
+        command = 'ln -sf {:} {:}'.format(path_true, path_symlink)
+        print(command)
+        os.system(command)
+
+    # Go back to starting directory.
+    os.chdir(start_dir)
+
+    return
+
 def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho):
     
     # Get number of tetrahedra.
@@ -1832,14 +1840,6 @@ def main():
         order = int(in_id.readline())
         is_ellipsoidal = bool(in_id.readline())
 
-    ## Load radius information.
-    #path_input = os.path.join(dir_input, 'radii.txt')
-    #with open(path_input, 'r') as in_id:
-
-    #    r_srf = float(in_id.readline())
-    #    r_cmb = float(in_id.readline())
-    #    r_icb = float(in_id.readline())
-
     # Load model information.
     file_model = 'prem_no_crust_03.0.txt'
     path_model = os.path.join(dir_input, file_model)
@@ -1861,22 +1861,22 @@ def main():
 
     if max_ellipticity == 0.0:
 
-        ellipticity_str = 'inf'
+        ellipticity_str = 'sph'
 
     else:
 
         ellipticity_str = '{:>3d}'.format(int(round(1.0/max_ellipticity)))
 
     # Set the output directory.
-    # The name includes the mesh size on the CMB sphere. 
+    # The name includes the mesh size on the CMB ellipsoid
+    # and the inverse of the ellipticity of the outer surface.
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    #subdir_out = os.path.join(dir_output, 'sphere_{:>06.1f}'.format(mesh_size))
-    name_run = 'prem_{:>06.1f}_{:1d}_{:}'.format(mesh_size, order, ellipticity_str)
-    #subdir_out = dir_output
+    name_run = 'prem_{:>06.1f}_{:}'.format(mesh_size, ellipticity_str)
     subdir_out = os.path.join(dir_output, name_run)
     for dir_ in [dir_output, subdir_out]:
         mkdir_if_not_exist(dir_)
 
+    # Choose the name of the model (prefixes the model files).
     name = 'model'
 
     # Set the largest allowed mesh sizes (km) on each discontinuity.
@@ -1890,8 +1890,8 @@ def main():
           80.0  # Surface.
         ])
 
+    # Relax the mesh size limits (seems to give better results).
     mesh_size_maxima = 2.0*mesh_size_maxima
-    #mesh_size_maxima = 3.0*mesh_size_maxima
 
     # Make the .poly file, defining polygonal surfaces of regions.
     path_poly, path_tetgen_ele = make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
