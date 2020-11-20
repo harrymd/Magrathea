@@ -77,8 +77,8 @@ def main():
 
         copyfile(path_source, path_dest) 
 
-    cmd_build_spherical = os.path.join(dir_work, 'build_spherical.py')    
-    cmd = 'python3 {:} {:}'.format(cmd_build_spherical, path_input)
+    cmd_build_ellipsoidal = os.path.join(dir_work, 'build_ellipsoidal.py')    
+    cmd = 'python3 {:} {:}'.format(cmd_build_ellipsoidal, path_input)
     print(cmd)
     os.system(cmd)
 
