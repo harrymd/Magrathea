@@ -1,0 +1,83 @@
+ ntarget=
+   10000
+ iprec=
+       1
+ epsfmm=
+  0.50000E-03
+ nbox=
+     160
+ scale=
+  0.10000E+01  0.99980E+00  0.49990E+00  0.24995E+00  0.12498E+00  0.62488E-01
+  lused7 is 
+  290006
+ in hfmm3dpart, bsize(0) zk/2 pi=
+  0.31825E+00
+ zk=
+  0.10000E+01  0.10000E+00
+ bsize=
+  0.19996E+01  0.99980E+00  0.49990E+00  0.24995E+00  0.12498E+00  0.62488E-01
+ nterms=
+      12      12      12      11      11      11
+ nmax=
+      12
+ finished reordering=
+       0
+ ier=
+       0
+ nboxes=
+     429
+ nlev=
+       5
+ nboxes=
+     429
+ lused7=
+  291562
+  lmptot is 
+  481653
+  lused7 is 
+  481654
+ === STEP 1 (form mp) ====
+ === STEP 2 (form lo) ====
+ === STEPS 3,4,5 ====
+ === STEP 6 (eval mp) ====
+ === STEP 7 (eval lo) ====
+ === STEP 8 (direct) =====
+ timeinfo=
+  0.11986E+00  0.84497E+00  0.33738E-01  0.64877E+00  0.11885E+00  0.39386E+00
+  0.10975E+00  0.20239E+01
+ nboxes=
+     429
+ nsource=
+   10000
+ ntarget=
+   10000
+ lwlists=
+   32766
+ lused total =
+  481654
+ memory / point = 
+  0.48165E+02
+ nsource=
+   10000
+ ntarget=
+   10000
+ after fmm, time (sec)=
+  0.43121E+01
+ after fmm, speed (points+targets/sec)=
+  0.46382E+04
+ directly, estimated time (sec)=
+  0.21672E+02
+ directly, estimated speed (points/sec)=
+  0.46142E+03
+ relative L2 error in potential=
+  0.68709E-06
+ relative L2 error in field=
+  0.28455E-07
+ directly, estimated time (sec)=
+  0.22106E+02
+ directly, estimated speed (targets/sec)=
+  0.45238E+03
+ relative L2 error in target potential=
+  0.42849E-05
+ relative L2 error in target field=
+  0.47311E-04
