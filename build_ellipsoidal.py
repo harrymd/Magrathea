@@ -14,6 +14,7 @@ unstructuredGridToVTK = evtk.hl.unstructuredGridToVTK
 VtkTriangle = evtk.vtk.VtkTriangle
 VtkTetra = evtk.vtk.VtkTetra
 VtkQuad = evtk.vtk.VtkQuad
+VtkQuadraticTetra = evtk.vtk.VtkQuadraticTetra
 
 # Utilities. ------------------------------------------------------------------
 def LegendrePoly2(x):
@@ -257,6 +258,13 @@ def test_XYZ_to_REll(case):
 # Building the mesh. ----------------------------------------------------------
 def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
 
+    # Define output path.
+    path_poly = os.path.join(subdir_out, '{:}.poly'.format(name))
+    if os.path.exists(path_poly):
+
+        print('Tetgen .poly input file already exists, skipping.')
+        return path_poly
+
     # Determine the mesh size on the CMB sphere. 
     mesh_size = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
     #mesh_size = 3.0*mesh_size
@@ -475,9 +483,9 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
     pts_regions = np.array([*shell_points, pt_centre_llsvp]).T
 
     # Write the .poly file.
-    path_poly, path_tetgen_ele = make_ellipsoidal_poly_file(pts_list, pts_llsvp_top, tri_list, tri_llsvp_top, quad_llsvp_sides, pts_regions, subdir_out, name)
+    make_ellipsoidal_poly_file(pts_list, pts_llsvp_top, tri_list, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly)
 
-    return path_poly, path_tetgen_ele
+    return path_poly
 
 def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
 
@@ -1097,16 +1105,11 @@ def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_e
 
     return
 
-def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres, tri_llsvp_top, quad_llsvp_sides, pts_regions, subdir_out, name):
+def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly): 
     '''
     See section 5.2.2 of the TetGen manual for the specification of the .poly
     file.
     '''
-
-    # Define output path.
-    #name = 'spheres'
-    path_poly = os.path.join(subdir_out, '{:}.poly'.format(name))
-    path_tetgen_ele = os.path.join(subdir_out, '{:}.1.ele'.format(name))
 
     # Merge point lists.
     pts = np.concatenate([*pts_list_spheres, pts_llsvp_top], axis = 1)
@@ -1256,7 +1259,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
             out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e} {:>8d}\n'.format(i + 1,
                 pts_regions[0, i], pts_regions[1, i], pts_regions[2, i], i + 1))
 
-    return path_poly, path_tetgen_ele
+    return
 
 def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
     '''
@@ -1306,6 +1309,12 @@ def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
 
 # Assigning parameters at mesh points. ----------------------------------------
 def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, ellipticity_data):
+    
+    files_exist = check_files_assign_params(subdir_out, name, order)
+    if files_exist:
+
+        print('All model parameter files exist, skipping.')
+        return
 
     # Define file paths.
     path_node   = os.path.join(subdir_out, '{:}.1.node'.format(name))
@@ -1322,6 +1331,29 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
     # Get the coordinates of each point in the tetrahedral mesh (including
     # higher-order points if requested).
     nodal_pts, links = get_nodal_points(nodes, tets, tet_info)
+    
+    #links2 = links.copy()
+    ##links = links + 1
+    #n_tets = tets.shape[1]
+    #links = np.zeros((tet_info['n_pts'], n_tets), dtype = np.int)
+    #k = 0 
+    #for i in range(n_tets):
+    #    for j in range(tet_info['n_pts']):
+    #        links[j, i] = k
+    #        k = k + 1
+
+    #print(links[:, 0:10])
+    #print(links2[:, 0:10])
+
+    ##assert np.all(links == links2)
+    ##print(tets.shape)
+    ##print(order)
+    #print(links.shape)
+    #print(links2.shape)
+
+    #sys.exit()
+
+    ##print(links[:, -5:])
 
     # Create the output arrays.
     n_tets = tets.shape[1]
@@ -1486,8 +1518,14 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
     # Finally, save as a VTK file (only for visualisation).
     # Note: No file suffix is added because PyEVTK automatically adds the
     # suffix .vtu.
-    path_vtk = os.path.join(subdir_out, '{:}_pOrd_{:>1d}'.format(name, order))
-    save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho)
+    if order == 1:
+
+        path_vtk = os.path.join(subdir_out, '{:}_pOrd_{:>1d}'.format(name, order))
+        save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho, order)
+
+    else:
+
+        print('Not saving model to VTK file, not implemented yet for order = {:>1d}.'.format(order))
 
     # Create symbolic links.
     # This allows the two models (with/without anomaly) to share their
@@ -1495,6 +1533,58 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
     create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header)
 
     return
+
+def check_files_assign_params(subdir_out, name, order):
+
+    path_list = []
+
+    file_summary = 'mesh_info.txt' 
+    path_summary = os.path.join(subdir_out, file_summary)
+    path_list.append(path_summary)
+
+    # Loop over each variable and save as a binary file.
+    var_str_list = ['vp', 'vs', 'rho']
+    anomaly_str_list = ['with_anomaly', 'without_anomaly']
+    for i in range(3):
+
+        for j in range(2):
+
+            # Get file path.
+            file_ = '{:}.1_{:}_pod_{:1d}_true_{:}.dat'.format(name, var_str_list[i], order, anomaly_str_list[j]) 
+            path = os.path.join(subdir_out, file_)
+            path_list.append(path)
+
+    file_mesh_header = '{:}.1_mesh.header'.format(name)
+    path_mesh_header = os.path.join(subdir_out, file_mesh_header) 
+
+    file_ele_dat = '{:}.1_ele.dat'.format(name)
+    path_ele_dat = os.path.join(subdir_out, file_ele_dat)
+
+    file_node_dat = '{:}.1_node.dat'.format(name)
+    path_node_dat = os.path.join(subdir_out, file_node_dat)
+
+    file_neigh_dat = '{:}.1_neigh.dat'.format(name)
+    path_neigh_dat = os.path.join(subdir_out, file_neigh_dat)
+
+    path_list = path_list + [path_mesh_header, path_ele_dat, path_node_dat, path_neigh_dat]
+
+    # Finally, save as a VTK file (only for visualisation).
+    # Note: No file suffix is added because PyEVTK automatically adds the
+    # suffix .vtu.
+    if order == 1:
+
+        path_vtk = os.path.join(subdir_out, '{:}_pOrd_{:>1d}.vtu'.format(name, order))
+        path_list.append(path_vtk)
+
+    # Create symbolic links.
+    # This allows the two models (with/without anomaly) to share their
+    # node files.
+    path_list_symlink = create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header, path_list_only = True)
+
+    path_list = path_list + path_list_symlink
+    files_exist = all([os.path.exists(path_) for path_ in path_list])
+
+    return files_exist
 
 def load_tetgen_mesh(path_node, path_ele, path_neigh):
 
@@ -1671,7 +1761,7 @@ def load_radial_model(path_model):
 
     return model, discon_lists
 
-def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header):
+def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header, path_list_only = False):
 
     #path_anomaly_symmesh_header        = os.path.join('..', file_mesh_header)
     #path_anomaly_symlink_node_dat   = os.path.join('..', file_node_dat)
@@ -1707,6 +1797,22 @@ def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_n
     rel_path_no_anomaly_v_p_dat = os.path.join('../..', file_no_anomaly_v_p_dat)
     rel_path_no_anomaly_v_s_dat = os.path.join('../..', file_no_anomaly_v_s_dat)
 
+    dir_pOrder = os.path.join(subdir_out, 'pOrder_{:>1d}'.format(order))
+    mkdir_if_not_exist(dir_pOrder)
+    dir_with_anomaly = os.path.join(dir_pOrder, 'with_anomaly')
+    dir_without_anomaly = os.path.join(dir_pOrder, 'without_anomaly')
+    if path_list_only:
+        
+        files = [   file_symlink_rho_dat, file_symlink_v_p_dat, file_symlink_v_s_dat,
+                    file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header] 
+
+        path_list_with_anomaly = [os.path.join(dir_with_anomaly, file_) for file_ in files]
+        path_list_without_anomaly = [os.path.join(dir_without_anomaly, file_) for file_ in files]
+
+        path_list = path_list_with_anomaly + path_list_without_anomaly
+
+        return path_list
+
     # Pair the symlink targets with the symlink names for the model with
     # anomaly.
     path_pairs_with_anomaly =\
@@ -1730,10 +1836,6 @@ def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_n
                     [rel_path_no_anomaly_v_s_dat,      file_symlink_v_s_dat]]
 
     # Create the symlinks.
-    dir_pOrder = os.path.join(subdir_out, 'pOrder_{:>1d}'.format(order))
-    mkdir_if_not_exist(dir_pOrder)
-    dir_with_anomaly = os.path.join(dir_pOrder, 'with_anomaly')
-    dir_without_anomaly = os.path.join(dir_pOrder, 'without_anomaly')
     create_symlinks_cmd(path_pairs_with_anomaly, dir_with_anomaly)
     create_symlinks_cmd(path_pairs_without_anomaly, dir_without_anomaly)
 
@@ -1763,7 +1865,7 @@ def create_symlinks_cmd(path_pairs, directory):
 
     return
 
-def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho):
+def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho, order):
     
     # Get number of tetrahedra.
     n_tets = tets.shape[1]
@@ -1771,7 +1873,21 @@ def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho):
     # Define offsets (in the flattened tetrahedra connectivity list, the
     # index of the last node of each tetrahedron). Node 1-based indexing
     # is used for this list.
-    offsets = 4*(np.array(list(range(n_tets)), dtype = np.int) + 1)
+    if order == 1:
+
+        n_pts_per_tet = 4
+        cell_id = VtkTetra.tid
+
+    elif order == 2:
+
+        n_pts_per_tet = 10
+        cell_id = VtkQuadraticTetra.tid
+
+    else:
+
+        raise ValueError
+    
+    offsets = n_pts_per_tet*(np.array(list(range(n_tets)), dtype = np.int) + 1)
     
     # VTK does not support discontinuities (where a shared node can have different
     # parameter values depending on which tetrahedron it is in). Therefore,
@@ -1801,7 +1917,7 @@ def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho):
 
     # Define a list of cell types.
     # In this case, all of the cell types are the same (VtkTetra).
-    cell_types = np.zeros(n_tets, dtype = np.int) + VtkTetra.tid
+    cell_types = np.zeros(n_tets, dtype = np.int) + cell_id
 
     # Create a dictionary with information about the points.
     point_data = {'v_p' : v_p, 'v_s' : v_s, 'rho' : rho}
@@ -1894,7 +2010,7 @@ def main():
     mesh_size_maxima = 2.0*mesh_size_maxima
 
     # Make the .poly file, defining polygonal surfaces of regions.
-    path_poly, path_tetgen_ele = make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
+    path_poly = make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
 
     # Make the mesh sizing file (.b.poly), defining mesh size throughout domain.
     tet_min_max_edge_length_ratio = 2.0

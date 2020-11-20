@@ -22,9 +22,14 @@ where `input_file.txt` has the following format:
 /path/to/output_dir/
 tet_max_vol
 order
+is_ellipsoidal
 ```
 
-where `tet_max_vol` is the maximum allowed size of the tetrahedral mesh element, in km<sup>3</sup> and `order` is the finite-element order of the elements (1 or 2, i.e. linear or quadratic).
+where
+
+* `tet_max_vol` is the maximum allowed size of the tetrahedral mesh element, in km<sup>3</sup> 
+* `order` is the finite-element order of the elements (1 or 2, i.e. linear or quadratic)
+* `is_ellipsoidal` is 0 if the model is spherical, 1 if it is ellipsoidal.
 
 ## Storage
 
