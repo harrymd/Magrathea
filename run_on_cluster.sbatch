@@ -10,4 +10,5 @@
 #SBATCH -A TG-EAR170019
 #SBATCH --mail-user=hrmd@mit.edu
 #SBATCH --mail-type=all
+module add matlab
 python3 run_on_cluster.py

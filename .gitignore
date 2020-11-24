@@ -2,3 +2,6 @@ old/
 __pycache__/
 input_cluster/
 test_prem.py
+matlab/hidden/
+Magrathea_*.txt
+Magrathea_*.err

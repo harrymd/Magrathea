@@ -1299,9 +1299,10 @@ def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
     radius_edge_ratio = 1.5 # 1.5 Smaller is better (more equant).
     max_dihedral_angle = 15.0 # 20.0 Smallest dihedral angle (larger is better).
 
-    #command = 'tetgen -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
-    command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
-    #command = 'tetgen -k -A -pmnYCVFO5/7 -a {:>7.2f} {:}'.format(tet_max_vol, path_poly)
+    ##command = 'tetgen -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
+    #command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
+    command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
+    ##command = 'tetgen -k -A -pmnYCVFO5/7 -a {:>7.2f} {:}'.format(tet_max_vol, path_poly)
     print(command)
     os.system(command)
 
@@ -1841,6 +1842,38 @@ def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_n
 
     return
 
+def create_symlinks_gravity(subdir_out, name, order, path_list_only = False):
+
+    file_symlink_gravity_dat = '{:}.1_pod_{:1d}_potential_acceleration_true.dat'.format(name, order)
+
+    file_no_anomaly_gravity_dat = '{:}.1_pod_{:1d}_potential_acceleration_true_without_anomaly.dat'.format(name, order)
+    rel_path_no_anomaly_gravity_dat = os.path.join('../..', file_no_anomaly_gravity_dat)
+
+    file_anomaly_gravity_dat = '{:}.1_pod_{:1d}_potential_acceleration_true_with_anomaly.dat'.format(name, order)
+    rel_path_anomaly_gravity_dat = os.path.join('../..', file_anomaly_gravity_dat)
+
+    dir_pOrder = os.path.join(subdir_out, 'pOrder_{:>1d}'.format(order))
+    mkdir_if_not_exist(dir_pOrder)
+    dir_with_anomaly = os.path.join(dir_pOrder, 'with_anomaly')
+    dir_without_anomaly = os.path.join(dir_pOrder, 'without_anomaly')
+    if path_list_only:
+
+        path_list = [
+                os.path.join(dir_with_anomaly, file_symlink_gravity_dat),
+                os.path.join(dir_without_anomaly, file_symlink_gravity_dat)]
+        
+        return path_list
+
+
+    path_pairs_with_anomaly = [[rel_path_anomaly_gravity_dat, file_symlink_gravity_dat]]
+    path_pairs_without_anomaly = [[rel_path_no_anomaly_gravity_dat, file_symlink_gravity_dat]]
+
+    # Create the symlinks.
+    create_symlinks_cmd(path_pairs_with_anomaly, dir_with_anomaly)
+    create_symlinks_cmd(path_pairs_without_anomaly, dir_without_anomaly)
+
+    return
+
 def create_symlinks_cmd(path_pairs, directory):
 
     # Record starting directory.
@@ -1940,6 +1973,39 @@ def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho, ord
 
     return
 
+def calculate_gravity(subdir_out, dir_matlab, name,  order):
+
+    path_list = create_symlinks_gravity(subdir_out, name, order, path_list_only = True)
+    files_exist = all([os.path.exists(path_) for path_ in path_list])
+
+    if files_exist:
+
+        print('All gravity files exist, skipping.')
+        return
+
+    # Record starting directory.
+    start_dir = os.getcwd()
+
+    try:
+
+        os.chdir(dir_matlab)
+        for anomaly_str in ['without_anomaly', 'with_anomaly']:
+
+            command = 'matlab -nojvm -r "try; run_gravity(\'{:}\', \'model\', {:>1d}, \'{:}\'); catch e; fprintf(1, e.message); exit; end; exit"'.format(subdir_out, order, anomaly_str)
+            print(command)
+            os.system(command)
+
+        #run_gravity('/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_0473.4_300/', 'model', 1, 'without_anomaly')
+        create_symlinks_gravity(subdir_out, name, order, path_list_only = False)
+
+    # If any goes wrong, go back to start directory.
+    except:
+
+        os.chdir(start_dir)
+        raise
+
+    return
+
 # Main function. --------------------------------------------------------------
 def main():
 
@@ -1952,15 +2018,17 @@ def main():
 
         dir_input = in_id.readline().strip()
         dir_output = in_id.readline().strip()
-        tet_max_vol = float(in_id.readline())
-        order = int(in_id.readline())
-        is_ellipsoidal = bool(in_id.readline())
+        tet_max_vol = float(in_id.readline().strip())
+        order = int(in_id.readline().strip())
+        is_ellipsoidal = bool(int(in_id.readline().strip()))
+        get_gravity = bool(int(in_id.readline().strip()))
 
     # Load model information.
-    file_model = 'prem_no_crust_03.0.txt'
+    #file_model = 'prem_no_crust_03.0.txt'
+    file_model = 'prem_no_80km_03.0.txt'
     path_model = os.path.join(dir_input, file_model)
     model, discon_lists = load_radial_model(path_model)
-
+    
     # Load ellipticity information.
     if is_ellipsoidal:
 
@@ -1996,14 +2064,22 @@ def main():
     name = 'model'
 
     # Set the largest allowed mesh sizes (km) on each discontinuity.
+    #mesh_size_maxima = np.array([
+    #     500.0, # ICB.
+    #     500.0, # CMB.
+    #     370.0, # Base of transition zone (670).
+    #     180.0, # Top of transition zone (400).
+    #     140.0, # Base of lithosphere.
+    #      80.0, # Mid-lithosphere discontinuity.
+    #      80.0  # Surface.
+    #    ])
     mesh_size_maxima = np.array([
          500.0, # ICB.
          500.0, # CMB.
-         370.0, # Base of transition zone (670).
+         270.0, # Base of transition zone (670).
          180.0, # Top of transition zone (400).
-         140.0, # Base of lithosphere.
-          80.0, # Mid-lithosphere discontinuity.
-          80.0  # Surface.
+         220.0, # Base of lithosphere.
+         220.0  # Surface.
         ])
 
     # Relax the mesh size limits (seems to give better results).
@@ -2028,6 +2104,12 @@ def main():
 
     # Assign parameters at the mesh points.
     assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, ellipticity_data)
+
+    # Calculate the gravity field.
+    if get_gravity:
+
+        dir_matlab = os.path.join('.', 'matlab')
+        calculate_gravity(subdir_out, dir_matlab, name, order)
 
     return
 

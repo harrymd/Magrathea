@@ -2,6 +2,7 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import curve_fit
 
 dir_base = '/Users/hrmd_work/Documents/research/stoneley/'
 dir_input = os.path.join(dir_base, 'input', 'Magrathea', 'llsvp')
@@ -71,22 +72,6 @@ def load_radial_model(dir_input, name = 'prem_noocean', period = None, remove_cr
     v_p = remove_micro_discon(r, v_p, thresh = 5.0E-1)
     v_s = remove_micro_discon(r, v_s)
 
-    # Find fluid regions.
-    cond_fluid = (v_s < 1.0E-11)
-    i_fluid = np.where(cond_fluid)[0]
-    i_solid = np.where(~cond_fluid)[0]
-    
-    # Apply a frequency correction.
-    if period is not None:
-        
-        E =  (4.0/3.0)*((v_s/v_p)**2.0)
-
-        v_p[i_fluid] = v_p[i_fluid]*(1.0 - ((1.0/np.pi)*(np.log(period))*(((1.0 - E[i_fluid])*Q_ka[i_fluid]))))
-        v_p[i_solid] = v_p[i_solid]*(1.0 - ((1.0/np.pi)*(np.log(period))*(((1.0 - E[i_solid])*Q_ka[i_solid]) + (E[i_solid]*Q_mu[i_solid])))) 
-        
-        v_s[i_fluid] = 0.0
-        v_s[i_solid] = v_s[i_solid]*(1.0 - ((1.0/np.pi)*(np.log(period))*Q_mu[i_solid]))
-
     if remove_crust:
         
         n_pts = len(r)
@@ -122,6 +107,34 @@ def load_radial_model(dir_input, name = 'prem_noocean', period = None, remove_cr
         rho = rho_new
         q_ka = q_ka_new
         q_mu = q_mu_new
+
+    # Find fluid regions.
+    cond_fluid = (v_s < 1.0E-11)
+    i_fluid = np.where(cond_fluid)[0]
+    i_solid = np.where(~cond_fluid)[0]
+
+    # Fit quadratic to the upper part of the Q-mu model.
+    q_220 = q_mu[-10] 
+    q_0     = q_mu[-1]
+    q_fit_func = lambda r, k: q_220 + (q_0 - q_220)*k*(((r - (6371.0 - 220.0))/220.0)**2.0)
+
+    k_fit, _ = curve_fit(q_fit_func, 1.0E-3*r[-10:], q_mu[-10:], p0 = 1.0)
+    
+    q_mu[-10:] = q_fit_func(1.0E-3*r[-10:], k_fit)
+    Q_mu = 1.0/q_mu
+
+    # Apply a frequency correction.
+    if period is not None:
+        
+        E =  (4.0/3.0)*((v_s/v_p)**2.0)
+
+        v_p[i_fluid] = v_p[i_fluid]*(1.0 - ((1.0/np.pi)*(np.log(period))*(((1.0 - E[i_fluid])*Q_ka[i_fluid]))))
+        v_p[i_solid] = v_p[i_solid]*(1.0 - ((1.0/np.pi)*(np.log(period))*(((1.0 - E[i_solid])*Q_ka[i_solid]) + (E[i_solid]*Q_mu[i_solid])))) 
+        
+        v_s[i_fluid] = 0.0
+        v_s[i_solid] = v_s[i_solid]*(1.0 - ((1.0/np.pi)*(np.log(period))*Q_mu[i_solid]))
+
+
 
     # Convert to units used in NormalModes.
     r       = 1.0E-3*r
@@ -174,7 +187,9 @@ def main():
     remove_crust = True
     if remove_crust:
 
-        crust_str = 'no_crust'
+        #crust_str = 'no_crust'
+        crust_str = 'no_80km'
+
 
     else:
 
@@ -233,7 +248,7 @@ def main():
         i_max_frac_diff = np.argmax(abs_frac_diffs)
         print(abs_frac_diffs[i_max_frac_diff])
 
-    upper_mantle = False 
+    upper_mantle = True 
 
     fig, ax_arr = plt.subplots(1, 5, sharey = True, figsize = (11.0, 8.5))
     
@@ -244,11 +259,11 @@ def main():
                 '1/Q$_\\mu$']
     
     if upper_mantle:
-        upper_lims = [12.0, 6.8, 5.0, 61000.0, 650.0]
+        upper_lims = [12.0, 6.8, 5.0, 61000.0, 700.0]
         y_lims = [800.0, model_0['r'][0]] # Inverted axis.
         fig_name = 'model_upper_mantle_{:}'.format(crust_str)
     else:
-        upper_lims = [14.0, 7.5, 14.0, 61000.0, 650.0]
+        upper_lims = [14.0, 7.5, 14.0, 61000.0, 700.0]
         y_lims = [model_0['r'][-1], model_0['r'][0]] # Inverted axis.
         fig_name = 'model_whole_earth_{:}'.format(crust_str)
 
@@ -259,7 +274,7 @@ def main():
     #linestyle_new = '-'
     linestyle = '-'
     font_size_label = 12
-    plot_kwargs = {'linestyle' : linestyle, 'alpha' : alpha}
+    plot_kwargs = {'linestyle' : linestyle, 'alpha' : alpha, 'marker' : '.'}
     hline_kwargs = {'color' : 'k', 'linestyle' : '-', 'alpha' : 0.5}
     for i in range(len(keys)):
 
@@ -276,6 +291,8 @@ def main():
 
         ax.set_xlabel(labels[i], fontsize = font_size_label)
         ax.set_xlim([0.0, upper_lims[i]])
+
+    ax_arr[-1].plot([80.0, 80.0, 600.0, 600.0], [220.0, 80.0, 80.0, 0.0]) 
 
     ax = ax_arr[0]
     ax.set_ylabel('Radius (km)', fontsize = font_size_label)
