@@ -24,8 +24,9 @@ def main():
 
         tet_max_vol = float(in_id.readline())
         order       = int(in_id.readline())
+        is_ellipsoidal = bool(int(in_id.readline().strip()))
+        get_gravity = bool(int(in_id.readline().strip()))
 
-    is_ellipsoidal = True
     if is_ellipsoidal:
 
         path_ellipticity = os.path.join(dir_cluster_input, 'ellipticity_profile.txt')
@@ -67,6 +68,7 @@ def main():
         out_id.write('{:>16.12e}\n'.format(tet_max_vol))
         out_id.write('{:>1d}\n'.format(order))
         out_id.write('{:>1d}\n'.format(int(is_ellipsoidal)))
+        out_id.write('{:>1d}\n'.format(int(get_gravity)))
     
     #name_model = 'prem_noocean.txt'
     name_model = 'prem_no_80km_03.0.txt'
