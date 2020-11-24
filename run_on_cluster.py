@@ -64,7 +64,7 @@ def main():
         out_id.write('{:>1d}\n'.format(order))
     
     #name_model = 'prem_noocean.txt'
-    name_model = 'prem_no_crust_03.0.txt'
+    name_model = 'prem_no_80km_03.0.txt'
     name_outline = 'llsvp_smooth.txt'
     name_radii = 'radii.txt'
     name_ellipticity = 'ellipticity_profile.txt'

@@ -1,78 +1,115 @@
-function [] = run_gravity(dir_model, name_model)
+function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
     %% Calculates the gravity field of a planetary model.
     % Adapted from https://github.com/js1019/PlanetaryModels.
     
-    dir_model = '/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_0473.4_1_300/';
-    name_model = 'model';
+    %dir_model = '/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_0473.4_300/';
+    %name_model = 'model';
     
-    % Load FMM library.
+    fprintf('Calculating gravity\n');
+    tic
+    
+    % Include FMM library.
     addpath('fmmlib3d-1.2/matlab/');
+    
+    % Include Nodal Discontinuous Galerkin codes (taken from
+    % https://github.com/tcew/nodal-dg).
+    addpath('nodal-dg/');
 
     % Identify planetary model directory.
     fmesh = fullfile(dir_model, name_model);
-    
-    disp(fmesh)
-    
-    return
 
+    % Probably delete this
     % Load some useful variables.
     %load ../radialmodels/prem3L_noocean_gravity.mat
 
-    saveFMM = true;
+    % Probably delete this
+    %saveFMM = true;
 
     % Finite element order (choose 1 or 2)
-    pOrder  = 2;
+    %pOrder  = 2;
 
     % Scaling.
-    scaling = 6.371*10^3;
+    %scaling = 6.371*10^3;
 
     % Load mesh.
-    [pout,tout,~,at] = read_mesh3d([fmesh,'.1']);
+    % [n_pts]           Number of mesh points.
+    % [n_tet]           Number of tetrahedra.
+    % pout  (n_pts, 3)  Points      
+    % tout  (n_tet, 4)  Tetrahedra.
+    % at    (n_tet, 1)  Attributes.
+    [pout,tout,~,at,~] = read_mesh3d([fmesh,'.1']);
 
-    % Define file names.
+    % Identify file names.
     fmid    = ['_pod_',int2str(pOrder),'_'];
-    % true model filenames
     fname = [fmesh,'.1']; 
-    ftail   = 'true.dat';
+    ftail   = ['true_', anomaly_str, '.dat'];
     frho    = [fname,'_rho',fmid,ftail];
     fgfld = [fname,fmid,'potential_acceleration_',ftail];
-    fvtk = [fname,fmid,'gravity.vtk'];
-
+    %fvtk = [fname,fmid,'gravity.vtk'];
+    
+    % Identify precision of TetGen files. 
     accry = 'float64';
-    G = 6.6723*10^-5; % gravitational constant
+    
+    % Set gravitational constant.
+    G = 6.6723*10^-5;
 
     % Number of elements.
     Ne = size(tout,1);
+    
+    % Number of points per tetrahedron (4 for pOrder = 1, 10 for pOrder =
+    % 2)
     pNp = (pOrder+1)*(pOrder+2)*(pOrder+3)/6;
 
-    % Read density model
-    fid=fopen(frho);
+    % Read density model.
+    % rho   (n_tet*4, 1) Density at each tetrahedron vertex (flattened).
+    fid =fopen(frho);
     rho = fread(fid,Ne*pNp,accry);
     fclose(fid);
 
-    % Reshape.
+    % Unflatten density array.
+    % rho (n_pts_per_tet, n_tet) Density at each tetrahedron vertex.
     rho0 = reshape(rho,pNp,Ne);
 
-    % Compute the detJ
+    % Compute the detJ.
     N = pOrder; 
+    
+    % Get the coordinates of a reference equilateral tetrahedron.
     [x,y,z] = Nodes3D(N); 
+    
+    % Transfer to generalised tetrahedral coordinates.
     [r,s,t] = xyztorst(x,y,z);
+    
+    % Calculate the Vandermonde matrix.
     V = Vandermonde3D(N,r,s,t);
+    
+    % Calculate the D matrix.
     [Dr,Ds,Dt] = Dmatrices3D(N, r, s, t, V);
+    
+    % Calculate the mass matrix.
     Mass = inv(V)'*inv(V);
-    va = tout(:,1)'; vb = tout(:,2)'; vc = tout(:,3)'; vd = tout(:,4)';
+    
+    % Calculate the nodal coordinates (coordinates of each point in 
+    % each tetrahedron).
+    va = tout(:,1)';
+    vb = tout(:,2)';
+    vc = tout(:,3)';
+    vd = tout(:,4)';
     x = 0.5*(-(1+r+s+t)*pout(va,1)'+(1+r)*pout(vb,1)'+(1+s)*pout(vc,1)'+(1+t)*pout(vd,1)');
     y = 0.5*(-(1+r+s+t)*pout(va,2)'+(1+r)*pout(vb,2)'+(1+s)*pout(vc,2)'+(1+t)*pout(vd,2)');
     z = 0.5*(-(1+r+s+t)*pout(va,3)'+(1+r)*pout(vb,3)'+(1+s)*pout(vc,3)'+(1+t)*pout(vd,3)');
+    
+    % Get the Jacobian.
     [~,~,~,~,~,~,~,~,~,J] = GeometricFactors3D(x,y,z,Dr,Ds,Dt);
-
+  
+    % Get the links between nodes.
     [~,~,~,tet] = construct(fname,pOrder);
 
     tnew = reshape(1:size(tet,1)*size(tet,2),size(tet,2),size(tet,1));
-    psiz = max(tet(:)); pnew0 = zeros(psiz,3);
+    psiz = max(tet(:));
+    pnew0 = zeros(psiz,3);
     pnew0(:,1) = x(:); 
     pnew0(:,2) = y(:); 
-    pnew0(:,3) = z(:);  
+    pnew0(:,3) = z(:);
 
     pnew = pnew0(tet',:);
 
@@ -111,14 +148,13 @@ function [] = run_gravity(dir_model, name_model)
 
     ifpottarg = 1;
     iffldtarg = 1;
-    toc 
+     
     if (nsource+ntarget < 20e6)
 
         % Use FMM.
         [U]=lfmm3dpart(iprec,nsource,source,ifcharge,charge,...
             ifdipole,dipstr,dipvec,ifpot,iffld,ntarget,target,ifpottarg,iffldtarg);
 
-        toc
         rnrm = sqrt(sum(target.*target));
         gnrm = sqrt(sum(real(U.fldtarg).*real(U.fldtarg)))*G;
 
@@ -150,8 +186,10 @@ function [] = run_gravity(dir_model, name_model)
     %norm(resg(:))/norm(gfld1(:))
     %end 
 
+    saveFMM = true;
     if saveFMM % FMM
     % save the data
+    fprintf('Writing to %s\n', fgfld);
     fid=fopen(fgfld,'w');
     fwrite(fid,gfld0',accry);
     fclose(fid);
@@ -162,7 +200,8 @@ function [] = run_gravity(dir_model, name_model)
     %fclose(fid);
     end 
 
-    if (saveFMM) 
+    saveVTK = 0;
+    if (saveVTK)
     gfld = -real(U.fldtarg(:,tet'))*G;
     %gfld = -real(U.fldtarg(:,tout'))*G;
     gpot = -real(U.pottarg(:))*G;
@@ -188,7 +227,7 @@ function [] = run_gravity(dir_model, name_model)
 
     stat = vtk_write_tetrahedral_grid_and_data(filename,data_title,pnew0/scaling,...
         tet,data_struct,flipped);
-    toc
+    %toc
     end
 
     %filename = [fname,fmid,'trueG.vtk'];
@@ -201,4 +240,5 @@ function [] = run_gravity(dir_model, name_model)
     %stat = vtk_write_tetrahedral_grid_and_data(filename,data_title,pnew0/scaling,...
     %    tet,data_struct,flipped);
     %toc
+    toc
 end
