@@ -74,17 +74,6 @@ def RLonLatEll_to_XYZ(r, lon, lat, ell):
     
     return x, y, z
 
-def XYZ_to_RLonLatEll(x, y, z, ellipticity_profile):
-    '''
-    Goes from x, y, z coordinates to r, lon, lat, ell, where
-    r, lon, lat are the coordinates in the sphere (before ellipsoidal deformation)
-    and ell is the ellipticity at those points.
-    '''
-
-    raise NotImplementedError
-
-    return r, lon, lat, ell 
-
 def get_real_points(mesh):
     '''
     The gmsh library adds extra points to help in the meshing process.
@@ -100,6 +89,7 @@ def get_real_points(mesh):
 
     # Get the points used in the triangulation.
     pts = mesh.points[i_mesh, :]
+    #print('get_real_points', pts.shape)
 
     # Define a mapping such that tri_new[i, j] = i_mapping[tri[i, j].
     # Note that i_mapping[k] == -1 if k does not belong to i_mesh.
@@ -386,13 +376,13 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
         pts_llsvp_top = move_points_outwards_spherical(pts_llsvp_on_cmb, d_r_llsvp)
 
     else:
-
+        
         ellipticity_top_llsvp = np.interp((r_cmb + d_r_llsvp),
                 r_ellipticity_profile, ellipticity_profile)
 
         pts_llsvp_top = move_points_outwards_ellipsoidal(pts_llsvp_on_cmb, d_r_llsvp,
                 r_cmb, ellipticity_top_llsvp)
-
+        
     # Next, find all of the triangles in the bottom surface of the LLSVP.
     tri_cmb = tri_list[discon_lists['j_cmb']]
     n_tri_cmb = tri_cmb.shape[1]
@@ -494,6 +484,40 @@ def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
 
         # Create a representation of the ellipsoidal surface and add it 
         # to the geometry.
+        spherical_shell = create_spherical_shell(geom, mesh_size, r)
+
+        # Generate the mesh.
+        mesh = geom.generate_mesh(dim = 2, verbose = False)
+
+    # Remove construction points.
+    pts, tri, i_mapping = get_real_points(mesh)
+    pts = pts.T
+    tri = tri.T
+
+    # Rescale to ellipsoid.
+    pts = rescale_to_ellipsoid(pts, r, ellipticity)
+
+    if name is not None:
+
+        # Second, save points.
+        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
+        print('Saving points to {:}'.format(out_path_pts))
+        np.save(out_path_pts, pts)
+
+        # Third, save triangulation.
+        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
+        print('Saving triangulation to {:}'.format(out_path_tri))
+        np.save(out_path_tri, tri)
+
+    return pts, tri
+
+def build_ellipsoid_v0(subdir_out, r, mesh_size, ellipticity, name = None):
+
+    # Create the sphere mesh with embedded LLSVP outline.
+    with pygmsh.geo.Geometry() as geom:
+
+        # Create a representation of the ellipsoidal surface and add it 
+        # to the geometry.
         ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r, ellipticity)
 
         # Generate the mesh.
@@ -530,6 +554,235 @@ def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
     return pts, tri
 
 def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
+
+    # Define a mesh coarsening factor.
+    # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
+    # a relatively even mesh size.
+    #mesh_size_factor = 2.0 
+    mesh_size_factor = 1.0
+
+    # Load the LLSVP outline and find the coordinates of the points with the
+    # chosen spacing by linear interpolation.
+    path_llsvp = os.path.join(dir_input, 'llsvp_smooth.txt')
+    s_llsvp, _, _, lon_llsvp, lat_llsvp = np.loadtxt(path_llsvp).T
+    s_llsvp = s_llsvp*1.0E-3 # Convert to km.
+    s_max = np.max(s_llsvp)
+    n_s_sample = int(round(s_max/(mesh_size_factor*mesh_size)))
+    s_pts = np.linspace(0.0, s_max, num = n_s_sample + 1)[:-1]
+    lon_pts = np.interp(s_pts, s_llsvp, lon_llsvp)
+    lat_pts = np.interp(s_pts, s_llsvp, lat_llsvp)
+
+    # Rotate the LLSVP, to avoid the grid lines used by gmsh during
+    # construction.
+    shift = 60.0
+    lon_pts = lon_pts + shift 
+
+    # Find the Cartesian coordinates of the points.
+    lon_pts_rads = np.deg2rad(lon_pts)
+    lat_pts_rads = np.deg2rad(lat_pts)
+    x_pts_sph, y_pts_sph, z_pts_sph = RLonLat_to_XYZ(r_cmb, lon_pts_rads, lat_pts_rads) 
+    pts_sph = np.array([x_pts_sph, y_pts_sph, z_pts_sph]).T
+    n_pts = pts_sph.shape[0]
+
+    # Create the ellipsoidal mesh with embedded LLSVP outline.
+    with pygmsh.geo.Geometry() as geom:
+
+        spherical_shell = create_spherical_shell(geom, mesh_size, r_cmb)
+
+        # Add the points that form the point-wise linear boundary of the LLSVP.
+        pt_list = []
+        for i in range(n_pts):
+
+            pt = geom.add_point(pts_sph[i, :], mesh_size = mesh_size_factor*mesh_size)
+            pt_list.append(pt)
+
+        # Add the straight-line segments that form the boundary of the LLSVP.
+        line_list = []
+        for i in range(n_pts):
+
+            i0 = i
+            i1 = (i + 1) % n_pts
+
+            line = geom.add_line(pt_list[i0], pt_list[i1])
+            geom.in_surface(line, spherical_shell.surface_loop)
+            line_list.append(line)
+
+        curve_loop = geom.add_curve_loop(line_list)
+
+        # Generate the mesh.
+        mesh = geom.generate_mesh(dim = 2, verbose = False)
+
+    # Find the indices of the points in the outline.
+    # The first 7 vertices are construction vertices which are ignored.
+    vertices = mesh.get_cells_type('vertex')
+    i_outline = np.squeeze(vertices[7:])
+
+    # Remove construction points.
+    pts, tri, i_mapping = get_real_points(mesh)
+    pts = pts.T
+    tri = tri.T
+
+    # Rescale to ellipsoid.
+    pts = rescale_to_ellipsoid(pts, r_cmb, ellipticity_cmb)
+
+    # Re-label the outline points after construction points have been removed.
+    i_outline_new = np.zeros(i_outline.shape, i_outline.dtype)
+    for j, i in enumerate(i_outline):
+        i_outline_new[j] = i_mapping[i]
+    i_outline = i_outline_new
+
+    # Find the points belonging to the LLSVP.
+    # First, create Shapely polygon representing the points.
+    x, y, z = pts
+    _, lon, lat = XYZ_to_RLonLat(x, y, z)
+    lon_deg = np.rad2deg(lon)
+    lat_deg = np.rad2deg(lat)
+    pts_deg_array = np.squeeze(np.array([lon_deg[i_outline], lat_deg[i_outline]]))
+    polygon = Polygon(pts_deg_array.T)
+    # Second, check each point to see if it is inside the polygon.
+    i_inside = []
+    n_pts = len(x)
+    for i in range(n_pts):
+
+        pt = Point((lon_deg[i], lat_deg[i]))
+
+        if polygon.contains(pt):
+
+            i_inside.append(i)
+    
+    i_inside = np.array(i_inside, dtype = np.int)
+
+    # Remove longitude shift.
+    lon_deg = lon_deg - shift
+    i_2pi_shift = (lon_deg < -180.0)
+    lon_deg[i_2pi_shift] = lon_deg[i_2pi_shift] + 360.0
+
+    # Convert back to x, y and z.
+    lat_rad = np.deg2rad(lat_deg)
+    lon_rad = np.deg2rad(lon_deg)
+    x, y, z = RLonLatEll_to_XYZ(r_cmb, lon_rad, lat_rad, ellipticity_cmb)
+
+    if name is not None:
+
+        # Second, save points.
+        pts = np.array([x, y, z])
+        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
+        print('Saving points to {:}'.format(out_path_pts))
+        np.save(out_path_pts, pts)
+
+        # Third, save triangulation.
+        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
+        print('Saving triangulation to {:}'.format(out_path_tri))
+        np.save(out_path_tri, tri)
+
+        # Fourth, save list of inside points.
+        out_path_i_pts_inside = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
+        print('Saving list of indices of LLSVP interior points to {:}'.format(out_path_i_pts_inside)) 
+        np.save(out_path_i_pts_inside, i_inside)
+
+        # Fifth, save list of points on boundary of LLSVP.
+        out_path_i_pts_boundary = os.path.join(subdir_out, 'i_pts_boundary_llsvp_on_cmb.npy')
+        print('Saving list of indices of LLSVP boundary points to {:}'.format(out_path_i_pts_boundary)) 
+        np.save(out_path_i_pts_boundary, i_outline)
+
+    make_plots = False
+    if make_plots:
+
+        import matplotlib.pyplot as plt
+
+        print(ellipticity_cmb)
+        print(1.0/ellipticity_cmb)
+
+        # Plot points in cross-section.
+        fig, ax_arr = plt.subplots(1, 2, figsize = (11.0, 8.5))
+        ax  = ax_arr[0] 
+        
+        sign_y = np.sign(y)
+        sign_y[sign_y == 0.0] = 1.0
+        r_h = np.sqrt(x**2.0 + y**2.0)*sign_y
+
+        theta_span = np.linspace(0.0, 2.0*np.pi, num = 1000)
+        r_h_circle = r_cmb*np.sin(theta_span)
+        z_circle = r_cmb*np.cos(theta_span)
+
+        cos_theta_span = np.cos(theta_span)
+        r_ellipse = r_cmb*(1.0 - (2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_span))
+        r_h_ellipse = r_ellipse*np.sin(theta_span)
+        z_ellipse = r_ellipse*np.cos(theta_span)
+
+        ax.scatter(r_h, z, s = 3, c = 'k', zorder = 10)
+
+        ax.plot(r_h_circle, z_circle, c = 'r', label = 'Sphere')
+        ax.plot(r_h_ellipse, z_ellipse, c = 'b', label = 'Ellipsoid')
+
+        ax.legend()
+
+        ax.set_aspect(1.0)
+
+        ax = ax_arr[1]
+
+        r_pts = np.sqrt((x**2.0 + y**2.0 + z**2.0))
+        r_h = np.sqrt(x**2.0 + y**2.0)
+        
+        theta_pts = np.arctan2(r_h, z)
+        cos_theta_pts = np.cos(theta_pts)
+        
+        r_from_theta_pts = r_cmb*(1.0 - ((2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_pts)))
+
+        max_r_error = np.max(np.abs(r_from_theta_pts - r_pts))
+        print('Maximum r error = {:>.3e} (units of R_cmb)'.format(max_r_error/r_cmb))
+
+        ax.scatter(r_pts - r_cmb, r_from_theta_pts - r_cmb, s = 3, c = 'k')
+        ax.plot([-15.0, 0.0], [-15.0, 0.0])
+
+        ax.set_xlabel('Radii of points - CMB radius')
+        ax.set_ylabel('Expected radii at point latitude - CMB radius')
+
+        ax.set_aspect(1.0)
+        
+        # -----------------------------------------------------------------
+
+        # Plot points on 2D map.
+        fig = plt.figure(figsize = (11.0, 8.5))
+        ax = plt.gca()
+
+        i_east = np.where(lon > 0.0)[0]
+        n_tri = tri.shape[1]
+        mask = np.zeros(n_tri, dtype = np.bool)
+        mask[:] = True
+        for i in range(n_tri):
+
+            lon_deg_i = lon_deg[tri[:, i]]
+            lon_diffs_i = [lon_deg_i[0] - lon_deg_i[1], lon_deg_i[0] - lon_deg_i[2],
+                            lon_deg_i[1] - lon_deg_i[2]]
+            max_lon_diff = np.max(np.abs(lon_diffs_i))
+
+            if max_lon_diff < 180.0:
+
+                mask[i] = False
+
+        ax.triplot(lon_deg, lat_deg, triangles = tri.T, mask = mask)
+        #ax.scatter(lon_deg[i_outline], lat_deg[i_outline], c = 'r', zorder = 10)
+        ax.plot(lon_deg[i_outline], lat_deg[i_outline], c = 'r', marker = '.', linestyle = '-', zorder = 10)
+        ax.scatter(lon_deg[i_inside], lat_deg[i_inside], c = 'g', zorder = 11)
+
+        ax.set_xlabel('Longitude')
+        ax.set_ylabel('Latitude')
+        ax.set_xlim([-180.0, 180.0])
+        ax.set_ylim([-90.0, 90.0])
+        
+        # Plot points in 3D.
+        fig = plt.figure(figsize = (8.5, 8.5))
+        ax = fig.add_subplot(1, 1, 1, projection='3d')
+        ax.plot_trisurf(x, y, z, triangles = tri.T, edgecolor = (1.0, 0.0, 0.0, 0.2), color = (1.0, 1.0, 1.0, 1.0)) #cmap = 'magma') 
+        ax.plot(x[i_outline], y[i_outline], z[i_outline], zorder = 10)
+        ax.scatter(x[i_inside], y[i_inside], z[i_inside], color = 'g', zorder = 11)
+
+        plt.show()
+
+    return pts, tri, i_inside, i_outline
+
+def build_cmb_ellipsoid_v0(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
 
     # Define a mesh coarsening factor.
     # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
@@ -809,27 +1062,62 @@ def move_points_outwards_spherical(pts, d_r):
 
     return pts
 
-def rescale_to_surface(pts, r, ellipticity):
+def rescale_to_ellipsoid(pts, r, ellipticity):
+    
+    x, y, z = pts
+    r_pts = np.sqrt(x**2.0 + y**2.0 + z**2.0)
 
-    r_pts = np.linalg.norm(pts, axis = 1)
+    r_h_pts = np.sqrt(x**2.0 + y**2.0)
+    theta_pts = np.arctan2(r_h_pts, z)
+    cos_theta_pts = np.cos(theta_pts)
+    
+    r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
+    scale_factor = r_from_theta_pts/r_pts
+
+    pts = pts*scale_factor
+
+    return pts
+
+def rescale_to_surface_old(pts, r, ellipticity):
+
+    r_pts = np.linalg.norm(pts, axis = 0)
     if ellipticity is None:
 
         scale_factor = r/r_pts
     
     else:
         
-        r_h_pts = np.linalg.norm(pts[:, 0:2], axis = 1) 
-        theta_pts = np.arctan2(r_h_pts, pts[:, -1])
+        #r_h_pts = np.linalg.norm(pts[:, 0:2], axis = 1) 
+        r_h_pts = np.sqrt(pts[0, :]**2.0 + pts[1, :]**2.0)
+        theta_pts = np.arctan2(r_h_pts, pts[2, :])
         cos_theta_pts = np.cos(theta_pts)
     
         r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
-        scale_factor = r/r_from_theta_pts
+
+        ##
+        #r_diff = r_pts - r_from_theta_pts
+        #max_r_diff = np.max(r_diff)
+        #min_r_diff = np.min(r_diff)
+        #print('Maximum positive deviation from spheroid: {:>+7.3f} km'.format(max_r_diff))
+        #print('Maximum negative deviation from spheroid: {:>-7.3f} km'.format(min_r_diff))
+
+        scale_factor = r_pts/r_from_theta_pts
+
     #
-    pts = pts*scale_factor[:, np.newaxis]
+    pts = pts*scale_factor
 
     return pts
 
-def create_ellipsoid_shell(geom, mesh_size, r, ellipticity):
+def create_spherical_shell(geom, mesh_size, r):
+
+    spherical_shell = geom.add_ball([0.0, 0.0, 0.0], r, mesh_size = mesh_size)
+
+    return spherical_shell
+
+def create_ellipsoid_shell_old(geom, mesh_size, r, ellipticity):
+    '''
+    Creates a spheroid with a true elliptical boundary, not approximate.
+    '''
 
     # Define the three semi-major axes of the ellipsoid along the
     # x-, y- and z- axes.
@@ -2007,6 +2295,225 @@ def calculate_gravity(subdir_out, dir_matlab, name,  order):
     return
 
 # Main function. --------------------------------------------------------------
+def test_build_ellipsoidal():
+
+    mesh_size = 300.0
+    r = 6371.0
+    ellipticity = 1.0/10.0
+
+    # Create the sphere mesh with embedded LLSVP outline.
+    with pygmsh.geo.Geometry() as geom:
+
+        # Create a representation of the ellipsoidal surface and add it 
+        # to the geometry.
+        ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r, ellipticity)
+
+        # Generate the mesh.
+        mesh = geom.generate_mesh(dim = 2, verbose = False)
+
+    # Remove construction points.
+    pts, tri, i_mapping = get_real_points(mesh)
+    pts = pts.T
+    tri = tri.T
+
+    # Unfortunately, it seems that Pygmsh doesn't guarantee that the points
+    # fall on the surface of the sphere/ellipsoid, so here we readjust them.
+    pts = rescale_to_surface(pts, r, ellipticity)
+    
+    print(pts.shape)
+    x, y, z = pts
+    x_min = np.min(x)
+    x_max = np.max(x)
+    y_min = np.min(y)
+    y_max = np.max(y)
+    z_min = np.min(z)
+    z_max = np.max(z)
+
+    i_x_min = np.argmin(x)
+    i_x_max = np.argmax(x)
+
+    i_y_min = np.argmin(y)
+    i_y_max = np.argmax(y)
+
+    def circle(r):
+
+        theta_span = np.linspace(0.0, 2.0*np.pi, num = 360)
+
+        x = r*np.sin(theta_span)
+        y = r*np.cos(theta_span)
+
+        return x, y
+
+    def ellipse(r, ell):
+
+        theta = np.linspace(0.0, 2.0*np.pi, num = 360)
+        cos_theta = np.cos(theta)
+        r_of_theta = r*(1.0 - ((2.0/3.0)*ell*LegendrePoly2(cos_theta)))
+
+        x = r_of_theta*np.sin(theta)
+        y = r_of_theta*np.cos(theta)
+
+        return x, y
+    
+    r_eq = (1.0 + (ellipticity/3.0))*r
+    x_circle_eq, y_circle_eq = circle(r_eq)
+
+    x_ell_eq, y_ell_eq = ellipse(r, ellipticity)
+
+    import matplotlib.pyplot as plt
+    fig, ax_arr = plt.subplots(1, 3, figsize = (11.0, 8.5))
+
+    scatter_kwargs = {'s' : 1}
+
+    ax = ax_arr[0]
+    ax.scatter(x, y, **scatter_kwargs)
+    ax.plot(x_circle_eq, y_circle_eq, c = 'r')
+    for i in [i_x_min, i_x_max, i_y_min, i_y_max]:
+
+        ax.scatter(x[i], y[i], c = 'g')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+
+    ax = ax_arr[1]
+    ax.scatter(x, z, **scatter_kwargs)
+    ax.plot(x_ell_eq, y_ell_eq, c = 'r')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Z')
+
+    ax = ax_arr[2]
+    ax.scatter(y, z, **scatter_kwargs)
+    ax.plot(x_ell_eq, y_ell_eq, c = 'r')
+    ax.set_xlabel('Y')
+    ax.set_ylabel('Z')
+
+    for ax in ax_arr:
+
+        ax.set_aspect(1.0)
+
+    plt.show()
+
+    
+    print('x_min:', ((-x_min/r) - 1.0)/ellipticity)
+    print('x_max:', (( x_max/r) - 1.0)/ellipticity)
+    print('y_min:', ((-y_min/r) - 1.0)/ellipticity)
+    print('y_max:', (( y_max/r) - 1.0)/ellipticity)
+    print('z_min:', ((-z_min/r) - 1.0)/ellipticity)
+    print('z_max:', (( z_max/r) - 1.0)/ellipticity)
+    
+    return
+
+def test_build_ellipsoidal2():
+    
+    #ellipticity = 1.0/300.0
+    ellipticity = 3.334666966629331718e-03
+    r = 6371.0
+
+    #dir_output = '/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_0473.4_300/'
+    dir_output = '/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_1019.8_300/'
+    path_nodes = os.path.join(dir_output, 'model.1.node')
+
+    nodes = np.loadtxt(path_nodes, skiprows = 1)
+
+    _, x, y, z = nodes.T
+
+    print(x.shape)
+
+    from scipy.spatial import ConvexHull
+    
+    hull = ConvexHull(nodes[:, 1:])
+    i_hull = hull.vertices
+
+    print(i_hull[0:5])
+    print(nodes.shape)
+
+    x = x[i_hull]
+    y = y[i_hull]
+    z = z[i_hull]
+
+    r_pts  = np.sqrt(x**2.0 + y**2.0 + z**2.0)
+
+    print(np.min(r_pts))
+    print(np.max(r_pts))
+
+    r_h = np.sqrt(x**2.0 + y**2.0)
+
+    theta = np.arctan2(r_h, z)
+    cos_theta = np.cos(theta)
+
+    r_ell = r*(1.0 - (2.0/3.0)*ellipticity*LegendrePoly2(cos_theta))
+
+    print(np.max(np.abs(r_ell - r_pts)))
+
+
+#    def circle(r):
+#
+#        theta_span = np.linspace(0.0, 2.0*np.pi, num = 360)
+#
+#        x = r*np.sin(theta_span)
+#        y = r*np.cos(theta_span)
+#
+#        return x, y
+#
+#    def ellipse(r, ell):
+#
+#        theta = np.linspace(0.0, 2.0*np.pi, num = 360)
+#        cos_theta = np.cos(theta)
+#        r_of_theta = r*(1.0 - ((2.0/3.0)*ell*LegendrePoly2(cos_theta)))
+#
+#        x = r_of_theta*np.sin(theta)
+#        y = r_of_theta*np.cos(theta)
+#
+#        return x, y
+#    
+#    r_eq = (1.0 + (ellipticity/3.0))*r
+#    x_circle_eq, y_circle_eq = circle(r_eq)
+#
+#    x_ell_eq, y_ell_eq = ellipse(r, ellipticity)
+#
+#    import matplotlib.pyplot as plt
+#    #fig, ax_arr = plt.subplots(1, 3, figsize = (11.0, 8.5))
+#
+#    scatter_kwargs = {'s' : 1}
+#
+#    fig = plt.figure(figsize = (11.0, 11.0))
+#    ax = plt.gca()
+#    ax.scatter(x, y, **scatter_kwargs)
+#    ax.plot(x_circle_eq, y_circle_eq, c = 'r')
+#    #for i in [i_x_min, i_x_max, i_y_min, i_y_max]:
+#
+#    #    ax.scatter(x[i], y[i], c = 'g')
+#
+#    ax.set_xlabel('X')
+#    ax.set_ylabel('Y')
+#    ax.set_aspect(1.0)
+#
+#    #ax = ax_arr[1]
+#    fig = plt.figure(figsize = (11.0, 11.0))
+#    ax = plt.gca()
+#    ax.scatter(x, z, **scatter_kwargs)
+#    ax.plot(x_ell_eq, y_ell_eq, c = 'r')
+#    ax.set_xlabel('X')
+#    ax.set_ylabel('Z')
+#    ax.set_aspect(1.0)
+#
+#    #ax = ax_arr[2]
+#    fig = plt.figure(figsize = (11.0, 11.0))
+#    ax = plt.gca()
+#    ax.scatter(y, z, **scatter_kwargs)
+#    ax.plot(x_ell_eq, y_ell_eq, c = 'r')
+#    ax.set_xlabel('Y')
+#    ax.set_ylabel('Z')
+#    ax.set_aspect(1.0)
+#
+#    ##for ax in ax_arr:
+#
+#    ##    ax.set_aspect(1.0)
+#
+#    plt.show()
+    
+    return
+
 def main():
 
     # Find the input file.
@@ -2116,3 +2623,5 @@ def main():
 if __name__ == '__main__':
 
     main()
+    #test_build_ellipsoidal()
+    #test_build_ellipsoidal2()

@@ -1,2 +1,6 @@
+/Users/hrmd_work/Documents/research/stoneley/input/Magrathea/llsvp/
+/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/
 1.0E8
 1
+1
+0
