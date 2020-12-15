@@ -17,7 +17,8 @@ def main():
     dir_cluster_input = os.path.join(dir_work, 'input_cluster')
     path_cluster_input = os.path.join(dir_cluster_input, 'input_cluster.txt')
 
-    dir_scratch = '/scratch/06414/tg857131/Magrathea/'
+    #dir_scratch = '/scratch/06414/tg857131/Magrathea/'
+    dir_scratch = '/scratch/06414/tg857131/Magrathea/v5'
 
     # Load cluster input file.
     with open(path_cluster_input, 'r') as in_id:
