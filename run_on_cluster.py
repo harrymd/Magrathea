@@ -20,6 +20,8 @@ def main():
     #dir_scratch = '/scratch/06414/tg857131/Magrathea/'
     dir_scratch = '/scratch/06414/tg857131/Magrathea/v5'
 
+    file_model = 'prem_no_80km_03.0.txt'
+
     # Load cluster input file.
     with open(path_cluster_input, 'r') as in_id:
 
@@ -64,18 +66,19 @@ def main():
 
         out_id.write('dir_input {:}\n'.format(dir_input))
         out_id.write('dir_output {:}\n'.format(dir_scratch))
+        out_id.write('file_model {:}\n'.format(file_model))
         out_id.write('tet_max_vol {:>16.12e}\n'.format(tet_max_vol))
         out_id.write('pOrder {:>1d}\n'.format(order))
         out_id.write('is_ellipsoidal {:>1d}\n'.format(int(is_ellipsoidal)))
         out_id.write('get_gravity {:>1d}\n'.format(int(get_gravity)))
     
     #name_model = 'prem_noocean.txt'
-    name_model = 'prem_no_80km_03.0.txt'
+    #name_model = 'prem_no_80km_03.0.txt'
     name_outline = 'llsvp_smooth.txt'
     name_radii = 'radii.txt'
     name_ellipticity = 'ellipticity_profile.txt'
 
-    names = [name_model, name_outline, name_radii, name_ellipticity]
+    names = [file_model, name_outline, name_radii, name_ellipticity]
     for name in names:
 
         path_source = os.path.join(dir_cluster_input, name)

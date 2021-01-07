@@ -2525,6 +2525,7 @@ def main():
 
         dir_input = in_id.readline().split()[1]
         dir_output = in_id.readline().split()[1]
+        file_model = in_id.readline().split()[1]
         tet_max_vol = float(in_id.readline().split()[1])
         order = int(in_id.readline().split()[1])
         is_ellipsoidal = bool(int(in_id.readline().split()[1]))
@@ -2533,6 +2534,7 @@ def main():
     print('Read input file {:}'.format(path_input))
     print('Input directory: {:}'.format(dir_input))
     print('Output directory: {:}'.format(dir_output))
+    print('Model file: {:}'.format(file_model))
     print('Maximum tetrahedron volume: {:>.3e} km3'.format(tet_max_vol))
     print('Finite-element order: {:>1d}'.format(order))
     print('Model is spheroidal (not spherical): {:}'.format(is_ellipsoidal))
@@ -2542,7 +2544,7 @@ def main():
 
     # Load model information.
     #file_model = 'prem_no_crust_03.0.txt'
-    file_model = 'prem_no_80km_03.0.txt'
+    #file_model = 'prem_no_80km_03.0.txt'
     path_model = os.path.join(dir_input, file_model)
     model, discon_lists = load_radial_model(path_model)
     
