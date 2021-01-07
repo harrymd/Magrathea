@@ -62,14 +62,12 @@ def main():
 
     with open(path_input, 'w') as out_id:
 
-        out_id.write('{:}\n'.format(dir_input))
-        #out_id.write('{:}\n'.format(dir_output))
-        out_id.write('{:}\n'.format(dir_scratch))
-        #out_id.write('{:}\n'.format(dir_run))
-        out_id.write('{:>16.12e}\n'.format(tet_max_vol))
-        out_id.write('{:>1d}\n'.format(order))
-        out_id.write('{:>1d}\n'.format(int(is_ellipsoidal)))
-        out_id.write('{:>1d}\n'.format(int(get_gravity)))
+        out_id.write('dir_input {:}\n'.format(dir_input))
+        out_id.write('dir_output {:}\n'.format(dir_scratch))
+        out_id.write('tet_max_vol {:>16.12e}\n'.format(tet_max_vol))
+        out_id.write('pOrder {:>1d}\n'.format(order))
+        out_id.write('is_ellipsoidal {:>1d}\n'.format(int(is_ellipsoidal)))
+        out_id.write('get_gravity {:>1d}\n'.format(int(get_gravity)))
     
     #name_model = 'prem_noocean.txt'
     name_model = 'prem_no_80km_03.0.txt'

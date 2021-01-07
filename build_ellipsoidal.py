@@ -2523,12 +2523,22 @@ def main():
     # Load input file.
     with open(path_input, 'r') as in_id:
 
-        dir_input = in_id.readline().strip()
-        dir_output = in_id.readline().strip()
-        tet_max_vol = float(in_id.readline().strip())
-        order = int(in_id.readline().strip())
-        is_ellipsoidal = bool(int(in_id.readline().strip()))
-        get_gravity = bool(int(in_id.readline().strip()))
+        dir_input = in_id.readline().split()[1]
+        dir_output = in_id.readline().split()[1]
+        tet_max_vol = float(in_id.readline().split()[1])
+        order = int(in_id.readline().split()[1])
+        is_ellipsoidal = bool(int(in_id.readline().split()[1]))
+        get_gravity = bool(int(in_id.readline().split()[1]))
+
+    print('Read input file {:}'.format(path_input))
+    print('Input directory: {:}'.format(dir_input))
+    print('Output directory: {:}'.format(dir_output))
+    print('Maximum tetrahedron volume: {:>.3e} km3'.format(tet_max_vol))
+    print('Finite-element order: {:>1d}'.format(order))
+    print('Model is spheroidal (not spherical): {:}'.format(is_ellipsoidal))
+    print('Calculate gravity: {:}'.format(get_gravity))
+
+    sys.exit()
 
     # Load model information.
     #file_model = 'prem_no_crust_03.0.txt'

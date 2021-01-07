@@ -1,6 +1,6 @@
-/Users/hrmd_work/Documents/research/stoneley/input/Magrathea/llsvp/
-/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/
-1.0E8
-1
-1
-0
+dir_input /Users/hrmd_work/Documents/research/stoneley/input/Magrathea/llsvp/
+dir_output /Users/hrmd_work/Documents/research/stoneley/output/Magrathea/
+tet_max_vol 1.0E8
+pOrder 1
+is_ellipsoidal 1
+get_gravity 0
