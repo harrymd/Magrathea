@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=48
 #SBATCH --export=ALL
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH -A TG-EAR170019
 #SBATCH --mail-user=hrmd@mit.edu
 #SBATCH --mail-type=all
