@@ -3,5 +3,5 @@ dir_output /Users/hrmd_work/Documents/research/stoneley/output/Magrathea/
 file_model prem_no_80km_03.0.txt
 tet_max_vol 1.0E8
 pOrder 1
-is_ellipsoidal 1
+is_spherical 0 
 get_gravity 0

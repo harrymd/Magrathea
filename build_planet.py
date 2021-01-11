@@ -246,7 +246,7 @@ def test_XYZ_to_REll(case):
     return
 
 # Building the mesh. ----------------------------------------------------------
-def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
+def make_poly_file_with_llsvp_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
 
     # Define output path.
     path_poly = os.path.join(subdir_out, '{:}.poly'.format(name))
@@ -266,16 +266,8 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
     i_mesh_too_big = (mesh_size_list > mesh_size_maxima)
     mesh_size_list[i_mesh_too_big] = mesh_size_maxima[i_mesh_too_big]
 
-    # Load ellipticity data.
-    if ellipticity_data is None:
-
-        raise NotImplementedError('Extra discontinuities in mantle not implemented for non-ellipsoidal models.')
-
-        ellipticity_srf = None
-        ellipticity_cmb = None
-        ellipticity_icb = None
-
-    else:
+    # Interpolate the ellipticity profile to get the ellipticity at the discontinuities, if required.
+    if ellipticity_data is not None:
 
         r_ellipticity_profile = ellipticity_data[:, 0]
         r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
@@ -284,6 +276,10 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
         ellipticity    = np.interp( r_discons,
                                     r_ellipticity_profile,
                                     ellipticity_profile)
+
+    else:
+
+        ellipticity = [None for _ in range(n_discons)]
 
     # Set output file for mesh points. 
     out_path_i_pts_inside_llsvp_on_cmb = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
@@ -336,11 +332,11 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
                 
                 pts_i, tri_i,                                               \
                 i_pts_inside_llsvp_on_cmb, i_pts_boundary_llsvp_on_cmb  =   \
-                build_cmb_ellipsoid(subdir_out, dir_input, r_discon, mesh_size_list[i], ellipticity[i], name_i)
+                build_cmb_spheroid(subdir_out, dir_input, r_discon, mesh_size_list[i], ellipticity[i], name_i)
 
             else:
 
-                pts_i, tri_i = build_ellipsoid(subdir_out, r_discon, mesh_size_list[i], ellipticity[i], name_i)
+                pts_i, tri_i = build_spheroid(subdir_out, r_discon, mesh_size_list[i], ellipticity[i], name_i)
 
             pts_list.append(pts_i)
             tri_list.append(tri_i)
@@ -380,7 +376,7 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
         ellipticity_top_llsvp = np.interp((r_cmb + d_r_llsvp),
                 r_ellipticity_profile, ellipticity_profile)
 
-        pts_llsvp_top = move_points_outwards_ellipsoidal(pts_llsvp_on_cmb, d_r_llsvp,
+        pts_llsvp_top = move_points_outwards_spheroidal(pts_llsvp_on_cmb, d_r_llsvp,
                 r_cmb, ellipticity_top_llsvp)
         
     # Next, find all of the triangles in the bottom surface of the LLSVP.
@@ -473,11 +469,22 @@ def make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model
     pts_regions = np.array([*shell_points, pt_centre_llsvp]).T
 
     # Write the .poly file.
-    make_ellipsoidal_poly_file(pts_list, pts_llsvp_top, tri_list, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly)
+    make_spheroidal_poly_file(pts_list, pts_llsvp_top, tri_list, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly)
 
     return path_poly
 
-def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
+def build_spheroid(subdir_out, r, mesh_size, ellipticity, name = None):
+    '''
+    Creates a triangular mesh on a spheroid.
+    If ellipticity = None, the spheroid is a sphere with radius r.
+    Otherwise, the spheroid is oblate with the specified ellipticity.
+    Oblate meshes are made by first creating a spherical mesh of radius r
+    and then moving points outwards or inwards according to formula 14.4
+    in Dahlen and Tromp (1998). Note that this shape is not a spheroid in
+    the standard mathematical definition.
+    If name != None, the spheroid mesh and triangulation will be saved in the
+    directory "subdir_out". Otherwise, if name = None, "subdir_out" can also be None.
+    '''
 
     # Create the sphere mesh with embedded LLSVP outline.
     with pygmsh.geo.Geometry() as geom:
@@ -494,8 +501,15 @@ def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
     pts = pts.T
     tri = tri.T
 
-    # Rescale to ellipsoid.
-    pts = rescale_to_ellipsoid(pts, r, ellipticity)
+    # Rescale to sphere or spheroid (pygmsh is not good at creating perfect
+    # spheres).
+    if ellipticity is None:
+
+        pts = rescale_to_sphere(pts, r)
+
+    else:
+
+        pts = rescale_to_spheroid(pts, r, ellipticity)
 
     if name is not None:
 
@@ -511,49 +525,17 @@ def build_ellipsoid(subdir_out, r, mesh_size, ellipticity, name = None):
 
     return pts, tri
 
-def build_ellipsoid_v0(subdir_out, r, mesh_size, ellipticity, name = None):
-
-    # Create the sphere mesh with embedded LLSVP outline.
-    with pygmsh.geo.Geometry() as geom:
-
-        # Create a representation of the ellipsoidal surface and add it 
-        # to the geometry.
-        ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r, ellipticity)
-
-        # Generate the mesh.
-        mesh = geom.generate_mesh(dim = 2, verbose = False)
-
-    # Remove construction points.
-    pts, tri, i_mapping = get_real_points(mesh)
-    pts = pts.T
-    tri = tri.T
-
-    # Unfortunately, it seems that Pygmsh doesn't guarantee that the points
-    # fall on the surface of the sphere/ellipsoid, so here we readjust them.
-    pts = rescale_to_surface(pts, r, ellipticity)
-
-    if name is not None:
-
-        # Save points and triangulation.
-        # First create output directory.
-        #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
-        #for dir_ in [dir_output, subdir_out]:
-        #    mkdir_if_not_exist(dir_)
-        #mkdir_if_not_exist(subdir_out)
-
-        # Second, save points.
-        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
-        print('Saving points to {:}'.format(out_path_pts))
-        np.save(out_path_pts, pts)
-
-        # Third, save triangulation.
-        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
-        print('Saving triangulation to {:}'.format(out_path_tri))
-        np.save(out_path_tri, tri)
-
-    return pts, tri
-
-def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
+def build_cmb_spheroid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
+    '''
+    Creates a triangular mesh on a spheroid which conforms to the outline of
+    an LLSVP anomaly given in dir_input/llsvp_smooth.txt.
+    If ellipticity_cmb = None, the spheroid is a sphere with radius r_cmb.
+    Otherwise, the spheroid is oblate with the specified ellipticity.
+    See build_spheroid() for details of spheroid construction.
+    The spheroid mesh and triangulation will be saved in the
+    directory "subdir_out". 
+    If make_plots = True, some diagnostic plots are shown.
+    '''
 
     # Define a mesh coarsening factor.
     # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
@@ -587,12 +569,14 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
     # Create the ellipsoidal mesh with embedded LLSVP outline.
     with pygmsh.geo.Geometry() as geom:
 
+        # First, create spherical shell.
         spherical_shell = create_spherical_shell(geom, mesh_size, r_cmb)
 
         # Add the points that form the point-wise linear boundary of the LLSVP.
         pt_list = []
         for i in range(n_pts):
 
+            # Add one point at a time.
             pt = geom.add_point(pts_sph[i, :], mesh_size = mesh_size_factor*mesh_size)
             pt_list.append(pt)
 
@@ -600,13 +584,16 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
         line_list = []
         for i in range(n_pts):
 
+            # Indices of the start and end point of each line segment.
             i0 = i
             i1 = (i + 1) % n_pts
 
+            # Add the line segments one-by-one.
             line = geom.add_line(pt_list[i0], pt_list[i1])
             geom.in_surface(line, spherical_shell.surface_loop)
             line_list.append(line)
 
+        # Add the whole loop to the pygmsh geometry.
         curve_loop = geom.add_curve_loop(line_list)
 
         # Generate the mesh.
@@ -622,8 +609,10 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
     pts = pts.T
     tri = tri.T
 
-    # Rescale to ellipsoid.
-    pts = rescale_to_ellipsoid(pts, r_cmb, ellipticity_cmb)
+    # Deform from sphere to oblate spheroid, if requested.
+    if ellipticity_cmb is not None:
+
+        pts = rescale_to_spheroid(pts, r_cmb, ellipticity_cmb)
 
     # Re-label the outline points after construction points have been removed.
     i_outline_new = np.zeros(i_outline.shape, i_outline.dtype)
@@ -632,20 +621,26 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
     i_outline = i_outline_new
 
     # Find the points belonging to the LLSVP.
+    #
     # First, create Shapely polygon representing the points.
     x, y, z = pts
+    # Note: In this approximation, lon and lat are the same in spherical
+    # and spheroidal cases.
     _, lon, lat = XYZ_to_RLonLat(x, y, z)
     lon_deg = np.rad2deg(lon)
     lat_deg = np.rad2deg(lat)
     pts_deg_array = np.squeeze(np.array([lon_deg[i_outline], lat_deg[i_outline]]))
     polygon = Polygon(pts_deg_array.T)
+    #
     # Second, check each point to see if it is inside the polygon.
     i_inside = []
     n_pts = len(x)
     for i in range(n_pts):
 
+        # Create Shapely point object.
         pt = Point((lon_deg[i], lat_deg[i]))
 
+        # Check if this point is inside the polygon.
         if polygon.contains(pt):
 
             i_inside.append(i)
@@ -660,7 +655,13 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
     # Convert back to x, y and z.
     lat_rad = np.deg2rad(lat_deg)
     lon_rad = np.deg2rad(lon_deg)
-    x, y, z = RLonLatEll_to_XYZ(r_cmb, lon_rad, lat_rad, ellipticity_cmb)
+    if ellipticity_cmb is not None:
+
+        x, y, z = RLonLatEll_to_XYZ(r_cmb, lon_rad, lat_rad, ellipticity_cmb)
+
+    else:
+
+        x, y, z = RLonLat_to_XYZ(r_cmb, lon_rad, lat_rad)
 
     if name is not None:
 
@@ -782,254 +783,7 @@ def build_cmb_ellipsoid(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb
 
     return pts, tri, i_inside, i_outline
 
-def build_cmb_ellipsoid_v0(subdir_out, dir_input, r_cmb, mesh_size, ellipticity_cmb, name, make_plots = False):
-
-    # Define a mesh coarsening factor.
-    # Seems necessary to coarsen the mesh near the LLSVP boundary to maintain
-    # a relatively even mesh size.
-    #mesh_size_factor = 2.0 
-    mesh_size_factor = 1.0
-
-    # Load the LLSVP outline and find the coordinates of the points with the
-    # chosen spacing by linear interpolation.
-    path_llsvp = os.path.join(dir_input, 'llsvp_smooth.txt')
-    s_llsvp, _, _, lon_llsvp, lat_llsvp = np.loadtxt(path_llsvp).T
-    s_llsvp = s_llsvp*1.0E-3 # Convert to km.
-    s_max = np.max(s_llsvp)
-    n_s_sample = int(round(s_max/(mesh_size_factor*mesh_size)))
-    s_pts = np.linspace(0.0, s_max, num = n_s_sample + 1)[:-1]
-    lon_pts = np.interp(s_pts, s_llsvp, lon_llsvp)
-    lat_pts = np.interp(s_pts, s_llsvp, lat_llsvp)
-
-    # Rotate the LLSVP, to avoid the grid lines used by gmsh during
-    # construction.
-    shift = 60.0
-    lon_pts = lon_pts + shift 
-
-    # Find the Cartesian coordinates of the points.
-    lon_pts_rads = np.deg2rad(lon_pts)
-    lat_pts_rads = np.deg2rad(lat_pts)
-    if ellipticity_cmb is None:
-
-        x_pts, y_pts, z_pts = RLonLat_to_XYZ(r_cmb, lon_pts_rads, lat_pts_rads) 
-
-    else:
-
-        x_pts, y_pts, z_pts = RLonLatEll_to_XYZ(r_cmb, lon_pts_rads, lat_pts_rads, ellipticity_cmb) 
-
-    pts = np.array([x_pts, y_pts, z_pts]).T
-    n_pts = pts.shape[0]
-
-    # Create the ellipsoidal mesh with embedded LLSVP outline.
-    with pygmsh.geo.Geometry() as geom:
-
-        ellipsoid_shell = create_ellipsoid_shell(geom, mesh_size, r_cmb, ellipticity_cmb)
-
-        # Add the points that form the point-wise linear boundary of the LLSVP.
-        pt_list = []
-        for i in range(n_pts):
-
-            pt = geom.add_point(pts[i, :], mesh_size = mesh_size_factor*mesh_size)
-            pt_list.append(pt)
-
-        # Add the straight-line segments that form the boundary of the LLSVP.
-        line_list = []
-        for i in range(n_pts):
-
-            i0 = i
-            i1 = (i + 1) % n_pts
-
-            line = geom.add_line(pt_list[i0], pt_list[i1])
-            geom.in_surface(line, ellipsoid_shell.surface_loop)
-            line_list.append(line)
-
-        curve_loop = geom.add_curve_loop(line_list)
-
-        # Generate the mesh.
-        mesh = geom.generate_mesh(dim = 2, verbose = False)
-
-    # Find the indices of the points in the outline.
-    # The first 7 vertices are construction vertices which are ignored.
-    vertices = mesh.get_cells_type('vertex')
-    i_outline = np.squeeze(vertices[7:])
-
-    # Remove construction points.
-    pts, tri, i_mapping = get_real_points(mesh)
-    tri = tri.T
-
-    # Unfortunately, it seems that Pygmsh doesn't guarantee that the points
-    # fall on the surface of the sphere/ellipsoid, so here we readjust them.
-    pts = rescale_to_surface(pts, r_cmb, ellipticity_cmb)
-
-    # Re-label the outline points after construction points have been removed.
-    i_outline_new = np.zeros(i_outline.shape, i_outline.dtype)
-    for j, i in enumerate(i_outline):
-        i_outline_new[j] = i_mapping[i]
-    i_outline = i_outline_new
-
-    ## Get the points and the triangulation.
-    #pts = mesh.points
-    #tri = mesh.get_cells_type('triangle')
-
-    # Find the points belonging to the LLSVP.
-    # First, create Shapely polygon representing the points.
-    x, y, z = pts.T
-    _, lon, lat = XYZ_to_RLonLat(x, y, z)
-    lon_deg = np.rad2deg(lon)
-    lat_deg = np.rad2deg(lat)
-    pts_deg_array = np.squeeze(np.array([lon_deg[i_outline], lat_deg[i_outline]]))
-    polygon = Polygon(pts_deg_array.T)
-    # Second, check each point to see if it is inside the polygon.
-    i_inside = []
-    n_pts = len(pts)
-    for i in range(n_pts):
-
-        pt = Point((lon_deg[i], lat_deg[i]))
-
-        if polygon.contains(pt):
-
-            i_inside.append(i)
-
-    i_inside = np.array(i_inside, dtype = np.int)
-
-    # Remove longitude shift.
-    lon_deg = lon_deg - shift
-    i_2pi_shift = (lon_deg < -180.0)
-    lon_deg[i_2pi_shift] = lon_deg[i_2pi_shift] + 360.0
-
-    # Convert back to x, y and z.
-    lat_rad = np.deg2rad(lat_deg)
-    lon_rad = np.deg2rad(lon_deg)
-    x, y, z = RLonLatEll_to_XYZ(r_cmb, lon_rad, lat_rad, ellipticity_cmb)
-
-    if name is not None:
-
-        # Save points and triangulation.
-        # First create output directory.
-        #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size))
-        #for dir_ in [dir_output, subdir_out]:
-        #    mkdir_if_not_exist(dir_)
-        #mkdir_if_not_exist(subdir_out)
-
-        # Second, save points.
-        pts = np.array([x, y, z])
-        out_path_pts = os.path.join(subdir_out, '{:}_pts.npy'.format(name))
-        print('Saving points to {:}'.format(out_path_pts))
-        np.save(out_path_pts, pts)
-
-        # Third, save triangulation.
-        out_path_tri = os.path.join(subdir_out, '{:}_tri.npy'.format(name))
-        print('Saving triangulation to {:}'.format(out_path_tri))
-        np.save(out_path_tri, tri)
-
-        # Fourth, save list of inside points.
-        out_path_i_pts_inside = os.path.join(subdir_out, 'i_pts_inside_llsvp_on_cmb.npy')
-        print('Saving list of indices of LLSVP interior points to {:}'.format(out_path_i_pts_inside)) 
-        np.save(out_path_i_pts_inside, i_inside)
-
-        # Fifth, save list of points on boundary of LLSVP.
-        out_path_i_pts_boundary = os.path.join(subdir_out, 'i_pts_boundary_llsvp_on_cmb.npy')
-        print('Saving list of indices of LLSVP boundary points to {:}'.format(out_path_i_pts_boundary)) 
-        np.save(out_path_i_pts_boundary, i_outline)
-
-    #make_plots = False 
-    if make_plots:
-
-        import matplotlib.pyplot as plt
-
-        print(ellipticity_cmb)
-        print(1.0/ellipticity_cmb)
-
-        # Plot points in cross-section.
-        fig, ax_arr = plt.subplots(1, 2, figsize = (11.0, 8.5))
-        ax  = ax_arr[0] 
-        
-        sign_y = np.sign(y)
-        sign_y[sign_y == 0.0] = 1.0
-        r_h = np.sqrt(x**2.0 + y**2.0)*sign_y
-
-        theta_span = np.linspace(0.0, 2.0*np.pi, num = 1000)
-        r_h_circle = r_cmb*np.sin(theta_span)
-        z_circle = r_cmb*np.cos(theta_span)
-
-        cos_theta_span = np.cos(theta_span)
-        r_ellipse = r_cmb*(1.0 - (2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_span))
-        r_h_ellipse = r_ellipse*np.sin(theta_span)
-        z_ellipse = r_ellipse*np.cos(theta_span)
-
-        ax.scatter(r_h, z, s = 3, c = 'k', zorder = 10)
-
-        ax.plot(r_h_circle, z_circle, c = 'r', label = 'Sphere')
-        ax.plot(r_h_ellipse, z_ellipse, c = 'b', label = 'Ellipsoid')
-
-        ax.legend()
-
-        ax.set_aspect(1.0)
-
-        ax = ax_arr[1]
-
-        r_pts = np.sqrt((x**2.0 + y**2.0 + z**2.0))
-        r_h = np.sqrt(x**2.0 + y**2.0)
-        
-        theta_pts = np.arctan2(r_h, z)
-        cos_theta_pts = np.cos(theta_pts)
-        
-        r_from_theta_pts = r_cmb*(1.0 - ((2.0/3.0)*ellipticity_cmb*LegendrePoly2(cos_theta_pts)))
-
-        max_r_error = np.max(np.abs(r_from_theta_pts - r_pts))
-        print('Maximum r error = {:>.3e} (units of R_cmb)'.format(max_r_error/r_cmb))
-
-        ax.scatter(r_pts - r_cmb, r_from_theta_pts - r_cmb, s = 3, c = 'k')
-        ax.plot([-15.0, 0.0], [-15.0, 0.0])
-
-        ax.set_xlabel('Radii of points - CMB radius')
-        ax.set_ylabel('Expected radii at point latitude - CMB radius')
-
-        ax.set_aspect(1.0)
-        
-        # -----------------------------------------------------------------
-
-        # Plot points on 2D map.
-        fig = plt.figure(figsize = (11.0, 8.5))
-        ax = plt.gca()
-
-        i_east = np.where(lon > 0.0)[0]
-        n_tri = tri.shape[1]
-        mask = np.zeros(n_tri, dtype = np.bool)
-        mask[:] = True
-        for i in range(n_tri):
-
-            lon_deg_i = lon_deg[tri[:, i]]
-            lon_diffs_i = [lon_deg_i[0] - lon_deg_i[1], lon_deg_i[0] - lon_deg_i[2],
-                            lon_deg_i[1] - lon_deg_i[2]]
-            max_lon_diff = np.max(np.abs(lon_diffs_i))
-
-            if max_lon_diff < 180.0:
-
-                mask[i] = False
-
-        ax.triplot(lon_deg, lat_deg, triangles = tri.T, mask = mask)
-        #ax.scatter(lon_deg[i_outline], lat_deg[i_outline], c = 'r', zorder = 10)
-        ax.plot(lon_deg[i_outline], lat_deg[i_outline], c = 'r', marker = '.', linestyle = '-', zorder = 10)
-        ax.scatter(lon_deg[i_inside], lat_deg[i_inside], c = 'g', zorder = 11)
-
-        ax.set_xlabel('Longitude')
-        ax.set_ylabel('Latitude')
-        ax.set_xlim([-180.0, 180.0])
-        ax.set_ylim([-90.0, 90.0])
-        
-        # Plot points in 3D.
-        fig = plt.figure(figsize = (8.5, 8.5))
-        ax = fig.add_subplot(1, 1, 1, projection='3d')
-        ax.plot_trisurf(x, y, z, triangles = tri.T, edgecolor = (1.0, 0.0, 0.0, 0.2), color = (1.0, 1.0, 1.0, 1.0)) #cmap = 'magma') 
-        ax.plot(x[i_outline], y[i_outline], z[i_outline], zorder = 10)
-        ax.scatter(x[i_inside], y[i_inside], z[i_inside], color = 'g', zorder = 11)
-
-        plt.show()
-
-    return pts, tri, i_inside, i_outline
-
-def move_points_outwards_ellipsoidal(pts, d_r_spherical, r_spherical, ellipticity_at_d_r):
+def move_points_outwards_spheroidal(pts, d_r_spherical, r_spherical, ellipticity_at_d_r):
     '''
     r_spherical     Known spherical radius of points (before flattening).
     ellipticity  Ellipticity at radius r + d_r.
@@ -1062,48 +816,43 @@ def move_points_outwards_spherical(pts, d_r):
 
     return pts
 
-def rescale_to_ellipsoid(pts, r, ellipticity):
+def rescale_to_sphere(pts, r):
+    '''
+    Deform spherical surface to oblate "spheroid" defined by Dahlen and
+    Tromp (1998) eq. 14.4.
+    '''
     
+    # Get radii of points.
     x, y, z = pts
     r_pts = np.sqrt(x**2.0 + y**2.0 + z**2.0)
 
-    r_h_pts = np.sqrt(x**2.0 + y**2.0)
-    theta_pts = np.arctan2(r_h_pts, z)
-    cos_theta_pts = np.cos(theta_pts)
-    
-    r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
-    scale_factor = r_from_theta_pts/r_pts
+    scale_factor = r/r_pts
 
+    # Move the points by the appropriate distance inwards or outwards.
     pts = pts*scale_factor
 
     return pts
 
-def rescale_to_surface_old(pts, r, ellipticity):
-
-    r_pts = np.linalg.norm(pts, axis = 0)
-    if ellipticity is None:
-
-        scale_factor = r/r_pts
+def rescale_to_spheroid(pts, r, ellipticity):
+    '''
+    Deform spherical surface to oblate "spheroid" defined by Dahlen and
+    Tromp (1998) eq. 14.4.
+    '''
     
-    else:
-        
-        #r_h_pts = np.linalg.norm(pts[:, 0:2], axis = 1) 
-        r_h_pts = np.sqrt(pts[0, :]**2.0 + pts[1, :]**2.0)
-        theta_pts = np.arctan2(r_h_pts, pts[2, :])
-        cos_theta_pts = np.cos(theta_pts)
+    # Get radii of points.
+    x, y, z = pts
+    r_pts = np.sqrt(x**2.0 + y**2.0 + z**2.0)
+
+    # Find co-latitude (polar angle) of points.
+    r_h_pts = np.sqrt(x**2.0 + y**2.0)
+    theta_pts = np.arctan2(r_h_pts, z)
+    cos_theta_pts = np.cos(theta_pts)
     
-        r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
+    # Calculate oblate radii from co-latitude (eq. 14.4).
+    r_from_theta_pts = r*(1.0 - ((2.0/3.0)*ellipticity*LegendrePoly2(cos_theta_pts)))
+    scale_factor = r_from_theta_pts/r_pts
 
-        ##
-        #r_diff = r_pts - r_from_theta_pts
-        #max_r_diff = np.max(r_diff)
-        #min_r_diff = np.min(r_diff)
-        #print('Maximum positive deviation from spheroid: {:>+7.3f} km'.format(max_r_diff))
-        #print('Maximum negative deviation from spheroid: {:>-7.3f} km'.format(min_r_diff))
-
-        scale_factor = r_pts/r_from_theta_pts
-
-    #
+    # Move the points by the appropriate distance inwards or outwards.
     pts = pts*scale_factor
 
     return pts
@@ -1114,160 +863,21 @@ def create_spherical_shell(geom, mesh_size, r):
 
     return spherical_shell
 
-def create_ellipsoid_shell_old(geom, mesh_size, r, ellipticity):
-    '''
-    Creates a spheroid with a true elliptical boundary, not approximate.
-    '''
-
-    # Define the three semi-major axes of the ellipsoid along the
-    # x-, y- and z- axes.
-    if ellipticity is None:
-
-        # Spherical case: Three axes are the same.
-        r_x = r
-        r_y = r_x
-        r_z = r_x
-
-    else:
-
-        # Ellipsoidal case: Axes in the equatorial plane (x- and y- axes)
-        # are greater than spherical radius, polar axis (z-axis) is
-        # less.
-        r_x = r*(1.0 + (ellipticity/3.0))
-        r_y = r_x 
-        r_z = r*(1.0 - ((2.0*ellipticity)/3.0))
-
-    # Add the ellipsoidal surface.
-    ellipsoid_shell = geom.add_ellipsoid([0.0, 0.0, 0.0], [r_x, r_y, r_z], mesh_size = mesh_size)
-
-    return ellipsoid_shell
-
-def make_mesh_sizing_function_spherical(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name):
+def make_mesh_sizing_function_spheroidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
 
     # Determine the mesh size on the CMB sphere. 
     mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    #mesh_size_min = 3.0*mesh_size_min
     mesh_size_max = tet_min_max_edge_length_ratio*mesh_size_min
 
     # Set output file for mesh points. 
-    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
-    #
-    #name = 'spheres'
     path_node           = os.path.join(subdir_out, '{:}.b.node'.format(name))
     path_ele            = os.path.join(subdir_out, '{:}.b.ele'.format(name))
     path_edge_length    = os.path.join(subdir_out, '{:}.b.mtr'.format(name))
 
-    # Load mesh points if already exist.
+    # Skip mesh creation if files already exist. 
     path_list = [path_node, path_ele, path_edge_length]
     files_exist = all([os.path.exists(path_) for path_ in path_list])
-
-    if files_exist:
-
-        print('Mesh sizing files already exist, skipping.')
-        return
-    
-    # Create a unit sphere for the concentric shells of the mesh sizing function.
-    mesh_size_unit = 0.3
-    pts_unit, tri_unit = build_sphere(None, 1.0, mesh_size_unit, None) 
-    n_pts_unit = pts_unit.shape[1]
-
-    # Calculate the gradient in mesh size with radial coordinate.
-    r_gap_max = r_srf - r_cmb
-    mesh_size_range = (mesh_size_max - mesh_size_min)
-    mesh_size_gradient = mesh_size_range/r_gap_max
-
-    # Define the radii of spheres in the mesh sizing function, increasing 
-    # from the centre.
-    r_list = np.array([ r_icb/2.0, r_icb, (r_icb + r_cmb)/2.0, r_cmb,
-                        (r_cmb + r_srf)/2.0, r_srf, r_srf*1.05])
-    mesh_size_list = np.array([
-        mesh_size_gradient*(r_icb -   0.0)*0.5,   0.0,
-        mesh_size_gradient*(r_cmb - r_icb)*0.5,   0.0,
-        mesh_size_gradient*(r_srf - r_cmb)*0.5,   0.0,
-        0.0])
-    mesh_size_list = mesh_size_list + mesh_size_min
-
-    # Start with a single point at the centre.
-    pts = np.atleast_2d([0.0, 0.0, 0.0]).T
-    mesh_size = np.atleast_1d(mesh_size_min)
-
-    # Add points from the concentric spheres.
-    n_sphere = len(r_list)
-    for i in range(n_sphere):
-
-        pts_sphere = pts_unit*r_list[i]
-        mesh_size_sphere = (np.zeros(n_pts_unit) + 1.0)*mesh_size_list[i]
-
-        pts = np.append(pts, pts_sphere, axis = 1)
-        mesh_size = np.append(mesh_size, mesh_size_sphere)
-
-    # Tetrahedralise the points.
-    tri_obj = Delaunay(pts.T)
-    tri = tri_obj.simplices.T
-    tri = tri + 1 # Convert to 1-based indexing.
-
-    # Get info.
-    n_pts = pts.shape[1]
-    n_tri = tri.shape[1]
-
-    # Save the node file.
-    print('Saving to {:}'.format(path_node))
-    with open(path_node, 'w') as out_id:
-
-        out_id.write('{:>12d} {:>12d} {:>12d} {:>12d}\n'.format(n_pts, 3, 0, 0))
-
-        for i in range(n_pts):
-
-            out_id.write('{:>12d} {:>12.5e} {:>12.5e} {:12.5e}\n'.format(i + 1, pts[0, i], pts[1, i], pts[2, i]))
-
-    # Save the tetrahedral element file.
-    print('Saving to {:}'.format(path_ele))
-    with open(path_ele, 'w') as out_id:
-
-        out_id.write('{:>12d} {:>12d} {:>12d}\n'.format(n_tri, 4, 0))
-
-        for i in range(n_tri):
-
-            out_id.write('{:>12d} {:>12d} {:>12d} {:>12d} {:>12d}\n'.format(i + 1, tri[0, i], tri[1, i], tri[2, i], tri[3, i]))
-
-    # Save the edge length file.
-    print('Saving to {:}'.format(path_edge_length))
-    with open(path_edge_length, 'w') as out_id:
-
-        out_id.write('{:>12d} {:>12d}\n'.format(n_pts, 1))
-
-        for i in range(n_pts):
-
-            out_id.write('{:>12.5e}\n'.format(mesh_size[i]))
-
-    return
-
-def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima):
-
-    r_ellipticity_profile = ellipticity_data[:, 0]
-    r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
-    ellipticity_profile = ellipticity_data[:, 1]
-
-    # Determine the mesh size on the CMB sphere. 
-    mesh_size_min = 0.5*(2.0**(1.0/2.0))*(3.0**(1.0/3.0))*(tet_max_vol**(1.0/3.0))
-    #mesh_size_min = mesh_size_min/3.0
-    #mesh_size_min = 3.0*mesh_size_min
-    mesh_size_max = tet_min_max_edge_length_ratio*mesh_size_min
-
-    #mesh_size_maxima = mesh_size_maxima/3.0
-
-    # Set output file for mesh points. 
-    #subdir_out = os.path.join(dir_output, 'sphere_{:>07.2f}'.format(mesh_size_min))
     #
-    #name = 'spheres'
-    path_node           = os.path.join(subdir_out, '{:}.b.node'.format(name))
-    path_ele            = os.path.join(subdir_out, '{:}.b.ele'.format(name))
-    path_edge_length    = os.path.join(subdir_out, '{:}.b.mtr'.format(name))
-
-    # Load mesh points if already exist.
-    path_list = [path_node, path_ele, path_edge_length]
-    files_exist = all([os.path.exists(path_) for path_ in path_list])
-
     if files_exist:
 
         print('Mesh sizing files already exist, skipping.')
@@ -1280,27 +890,42 @@ def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_e
     n_discons = len(r_discons)
     n_shells = 2*n_discons + 1
     r_shells = np.zeros(n_shells)
+    #
+    # Create concentric shells, one at each discontinuity and one half-way
+    # between each discontinuity.
     for i in range(n_discons):
 
+        # Half-way between i_th discontuity and (i + 1)th discontinuity.
         r_shells[2*i] = r_discons_with_zero[i] + (r_discons_with_zero[i + 1] - r_discons_with_zero[i])/2.0
+
+        # At the (i + 1)th discontinuity.
         r_shells[(2*i) + 1] = r_discons_with_zero[i + 1]
 
+    # Add a final shell outside the outermost discontinuity.
     r_shells[-1] = 1.05*r_shells[-2]
 
     # Calculate the gradient in mesh size with radial coordinate.
     r_gap_max = np.max(np.diff(r_shells))
-
     mesh_size_range = (mesh_size_max - mesh_size_min)
     mesh_size_gradient = mesh_size_range/r_gap_max
 
+    # Assign a mesh size to each concentric shell.
+    # The mesh size is pre-defined at the discontinuities and increases
+    # linearly away from them, to a maximum at the half-way point between
+    # discontinuities.
     mesh_size_list = np.zeros(n_shells)
     for i in range(n_discons):
         
+        # Specify mesh size at the discontinuities.
         mesh_size_mid = (r_shells[(2*i) + 1] - r_shells[(2*i)])*mesh_size_gradient
+
+        # Specify mesh size at the mid-points.
         mesh_size_list[(2*i)] = mesh_size_mid
 
+    # Apply the baseline mesh size.
     mesh_size_list = mesh_size_list + mesh_size_min
 
+    # Apply maximum mesh size threshold.
     for i in range(n_discons):
         
         if mesh_size_list[2*i + 1] > mesh_size_maxima[i]:
@@ -1323,19 +948,28 @@ def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_e
 
     #sys.exit()
 
-    # Find the ellipticity of each of the shells.
-    ellipticity_list = np.interp(r_shells, r_ellipticity_profile, ellipticity_profile)
-    
-    # Create a unit sphere for each of the concentric shells of the mesh sizing function.
+    # Find the ellipticity of each of the shells, if neeed.
+    if ellipticity_data is None:
+
+        ellipticity_list = [None for _ in range(len(r_shells))]
+
+    else:
+
+        # Linear interpolation of ellipticity profile at the shell locations.
+        r_ellipticity_profile = ellipticity_data[:, 0]
+        r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+        ellipticity_profile = ellipticity_data[:, 1]
+        ellipticity_list = np.interp(r_shells, r_ellipticity_profile, ellipticity_profile)
+
+    # Create a unit spheroid for each of the concentric shells of the mesh sizing function.
     n_shells = len(r_shells)
     mesh_size_unit = 0.3
     pts_unit_list = []
-
+    #
     for i in range(n_shells):
 
-        pts_unit, tri_unit = build_ellipsoid(None, 1.0, mesh_size_unit, ellipticity_list[i]) 
-        #n_pts_unit = pts_unit.shape[1]
-
+        # Build a unit spheroid.
+        pts_unit, tri_unit = build_spheroid(None, 1.0, mesh_size_unit, ellipticity_list[i]) 
         pts_unit_list.append(pts_unit)
 
     # Start with a single point at the centre.
@@ -1393,7 +1027,7 @@ def make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_e
 
     return
 
-def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly): 
+def make_spheroidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres, tri_llsvp_top, quad_llsvp_sides, pts_regions, path_poly): 
     '''
     See section 5.2.2 of the TetGen manual for the specification of the .poly
     file.
@@ -1422,14 +1056,18 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
     quad_llsvp_sides = quad_llsvp_sides + 1
     
     # Header lines for part one: Node list.
-    comments_1a = ['# Part 1 - node list', '# node count, 3 dim, no attribute, no boundary marker']
+    #comments_1a = ['# Part 1 - node list', '# node count, 3 dim, no attribute, no boundary marker']
+    comments_1a = ['# Part 1 - node list', '# node count, 3 dim, no attribute, use boundary marker']
     comment_1b = '# Node index, node coordinates'
-    header_1 = '{:>8d}{:>8d}{:>8d}{:>8d}'.format(n_nodes, n_dim, 0, 0)
+    #header_1 = '{:>8d}{:>8d}{:>8d}{:>8d}'.format(n_nodes, n_dim, 0, 0)
+    header_1 = '{:>8d}{:>8d}{:>8d}{:>8d}'.format(n_nodes, n_dim, 0, 1)
     header_and_comments_1 = [*comments_1a, header_1, comment_1b]
 
     # Header lines for part two: Facet list.
-    comments_2a = ['# Part 2 - facet list', '# facet count, no boundary marker']
-    header_2 = '{:>8d}{:>8d}'.format(n_facets, 0)
+    #comments_2a = ['# Part 2 - facet list', '# facet count, no boundary marker']
+    comments_2a = ['# Part 2 - facet list', '# facet count, use boundary marker']
+    #header_2 = '{:>8d}{:>8d}'.format(n_facets, 0)
+    header_2 = '{:>8d}{:>8d}'.format(n_facets, 1)
     comment_2b = '# facets'
     header_and_comments_2 = [*comments_2a, header_2, comment_2b]
 
@@ -1463,6 +1101,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
 
                 # Note: Write (i + 1) instead of (i) because of 1-based indexing.
                 out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e}\n'.format(i_pts + 1, pts_list_spheres[j][0, i], pts_list_spheres[j][1, i], pts_list_spheres[j][2, i]))
+                #out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e} {:>8d}\n'.format(i_pts + 1, pts_list_spheres[j][0, i], pts_list_spheres[j][1, i], pts_list_spheres[j][2, i], j + 4))
 
                 i_pts = i_pts + 1
 
@@ -1474,6 +1113,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
 
             # Note: Write (i + 1) instead of (i) because of 1-based indexing.
             out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e}\n'.format(i_pts + 1, pts_llsvp_top[0, i], pts_llsvp_top[1, i], pts_llsvp_top[2, i]))
+            #out_id.write('{:>8d} {:>+20.14e} {:>+20.14e} {:>+20.14e} {:>8d}\n'.format(i_pts + 1, pts_llsvp_top[0, i], pts_llsvp_top[1, i], pts_llsvp_top[2, i], 2))
 
             i_pts = i_pts + 1
 
@@ -1494,7 +1134,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
             for i in range(n_tri_j):
                 
                 # Write '1' to indicate each facet is a single triangle.
-                out_id.write('{:>8d}\n'.format(1))
+                out_id.write('{:>8d} {:>8d} {:>8d}\n'.format(1, 0, j + 4))
 
                 # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
                 # and i0, i1, i2 are the indices of the vertices of the triangle.
@@ -1507,7 +1147,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
         for i in range(n_tri_llsvp_top):
 
             # Write '1' to indicate each facet is a single triangle.
-            out_id.write('{:>8d}\n'.format(1))
+            out_id.write('{:>8d} {:>8d} {:>8d}\n'.format(1, 0, 2))
 
             # Write 3, i0, i1, i2 where 3 is the number of vertices of the triangle,
             # and i0, i1, i2 are the indices of the vertices of the triangle.
@@ -1520,7 +1160,7 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
         for i in range(n_quad_llsvp_sides):
 
             # Write '1' to indicate each facet is a single quadrilateral. 
-            out_id.write('{:>8d}\n'.format(1))
+            out_id.write('{:>8d} {:>8d} {:>8d}\n'.format(1, 0, 3))
 
             # Write 4, i0, i1, i2, i3 where 4 is the number of vertices of the quadrilateral,
             # and i0, i1, i2, i3 are the indices of the vertices of the quadrilateral.
@@ -1552,31 +1192,37 @@ def make_ellipsoidal_poly_file(pts_list_spheres, pts_llsvp_top, tri_list_spheres
 def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
     '''
     Generate the mesh by calling tetgen from command line.
+    See the TetGen manual for more detail.
     This creates .ele, .neigh and .node files.
-        unix([tetgen,' -pq1.5nYVFAa', num2str(tet_max_vol,'%f'),' ', mod_path,'.poly']);
-     p     Take a piecewise linear complex (.poly file) and tetrahedralise it.
-     q1.5/20.0 Improve quality of mesh so that each element has no radius/edge
-               ratio greater than 1.5, and dihedral angles no smaller than
-               20.0
-     n         Output tetrahedra neighbours to .neigh file.
-     Y         Do not modify input surface meshes.
-     V         Verbose.
-     F         Do not output .face or .edge files.
-     A         Assign attributes to tetrahedra in different regions.
-     a         Apply a maximum tetrahedron volume constraint.
-     k          Save a VTK file for visualisation.
-     more
-    %unix([tetgen,' -pq1.5/10.0nYVFAak', num2str(tet_max_vol,'%f'),' ', mod_path_llsvp,'.poly']);
-    %unix([tetgen,' -pmq1.5/10.0nYVFAa', num2str(tet_max_vol,'%f'),' ', mod_path,'.poly']);
-    unix([tetgen,' -A -pmq1.5/10.0nYCVFO5/7 -a ', num2str(tet_max_vol,'%f'),' ', mod_path_llsvp,'.poly']);
-    %unix([tetgen,' -pYq1.5AmO5/7nFCV ', mod_path_llsvp,'.poly']);
+    The following options are currently used:
+
+    p           Take a piecewise linear complex (.poly file) and tetrahedralise it.
+    q1.5/20.0   Improve quality of mesh so that each element has no radius/edge
+                ratio greater than 1.5, and dihedral angles no smaller than
+                20.0
+    n           Output tetrahedra neighbours to .neigh file.
+    V           Verbose.
+    A           Assign attributes to tetrahedra in different regions.
+    a           Apply a maximum tetrahedron volume constraint.
+    k           Save a VTK file for visualisation.
+    O2/7        Perform mesh optimisation with all available strategies (option 7)
+                with an optimisation level of 2 out of 10 (the default).
+    Y           Do not modify input surface meshes.
+    C           Check consistency of final mesh.
+
+    The following options have been used previously:
+
+    F           Do not output .face or .edge files.
     '''
     
+    # Define output paths.
     path_ele    = os.path.join(subdir_out, '{:}.1.ele'.format(name))
     path_neigh  = os.path.join(subdir_out, '{:}.1.neigh'.format(name))
     path_node   = os.path.join(subdir_out, '{:}.1.node'.format(name))
+    path_face   = os.path.join(subdir_out, '{:}.1.face'.format(name))
 
-    paths = [path_ele, path_neigh, path_node]
+    # Check for output files.
+    paths = [path_ele, path_neigh, path_node, path_face]
     paths_exist = all([os.path.exists(path) for path in paths])
 
     if paths_exist:
@@ -1584,13 +1230,12 @@ def tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name):
         print('All TetGen files exist. Skipping mesh creation.')
         return
 
+    # Set mesh quality parameters.
     radius_edge_ratio = 1.5 # 1.5 Smaller is better (more equant).
     max_dihedral_angle = 15.0 # 20.0 Smallest dihedral angle (larger is better).
 
-    ##command = 'tetgen -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
-    #command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nYCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
-    command = 'tetgen -k -A -pmq{:.2f}/{:.2f}nCVFO5/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
-    ##command = 'tetgen -k -A -pmnYCVFO5/7 -a {:>7.2f} {:}'.format(tet_max_vol, path_poly)
+    # Run TetGen.
+    command = 'tetgen -k -A -p -m -q{:.2f}/{:.2f} -nn -C -V -O2/7 -a {:>7.2f} {:}'.format(radius_edge_ratio, max_dihedral_angle, tet_max_vol, path_poly)
     print(command)
     os.system(command)
 
@@ -1693,7 +1338,7 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
 
         else:
             
-            r_ellipticity_profile = ellipticity_data[:, 0]*1.0E-3
+            r_ellipticity_profile = ellipticity_data[:, 0]*1.0E-3 # Convert to km.
             ellipticity_profile = ellipticity_data[:, 1]
             r_pts_region, _ = XYZ_to_REll(*nodal_pts_region, r_ellipticity_profile, ellipticity_profile)
 
@@ -1808,6 +1453,7 @@ def assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, e
     # Note: No file suffix is added because PyEVTK automatically adds the
     # suffix .vtu.
     if order == 1:
+    #if True:
 
         path_vtk = os.path.join(subdir_out, '{:}_pOrd_{:>1d}'.format(name, order))
         save_model_to_vtk(path_vtk, nodes, tets, links, tet_labels, v_p, v_s, rho, order)
@@ -1991,7 +1637,7 @@ def get_nodal_points(nodes, tets, tet_info):
 
     return nodal_pts, links
 
-def load_radial_model(path_model):
+def load_radial_model(path_model, ignore_midmantle_discons = False):
     
     # Load the model.
     model = dict()
@@ -2032,6 +1678,17 @@ def load_radial_model(path_model):
     #i_outer_core = np.array(list(range(i_icb, i_cmb)), dtype = np.int)
     #i_mantle = np.array(list(range(i_cmb, n_layers)), dtype = np.int)
 
+    if ignore_midmantle_discons:
+        
+        # Cut out the mid-mantle discontinuities.
+        n_discons_new = np.sum(i_discon_merge < i_cmb) + 1
+        i_discon_merge_new = np.zeros(n_discons_new, dtype = np.int)
+        i_discon_merge_new[0 : n_discons_new - 1] = i_discon_merge[0 : n_discons_new - 1]
+        i_discon_merge_new[-1] = i_discon_merge[-1]
+
+        n_discons = n_discons_new
+        i_discon_merge = i_discon_merge_new
+
     # Find which discontinuity in the list is the CMB.
     j_discon_cmb = np.where((i_discon_merge == (i_cmb - 1)))[0][0]
     i_discon_cmb = (i_cmb - 1)
@@ -2049,6 +1706,121 @@ def load_radial_model(path_model):
     discon_lists['n_discons'] = n_discons
 
     return model, discon_lists
+
+def check_discon_radii(subdir_out, name, model, discon_lists, ellipticity_data = None):
+    
+    if ellipticity_data is not None:
+
+        r_ellipticity_profile = ellipticity_data[:, 0]
+        r_ellipticity_profile = r_ellipticity_profile*1.0E-3 # Convert to km.
+        ellipticity_profile = ellipticity_data[:, 1]
+
+    # Define paths.
+    #path_ele    = os.path.join(subdir_out, '{:}.1.ele'.format(name))
+    #path_neigh  = os.path.join(subdir_out, '{:}.1.neigh'.format(name))
+    path_node   = os.path.join(subdir_out, '{:}.1.node'.format(name))
+    path_face   = os.path.join(subdir_out, '{:}.1.face'.format(name))
+
+    # Load the face file.
+    face_data = np.loadtxt(path_face, skiprows = 1)
+    face_nodes = face_data[:, 1 : 4].astype(np.int) - 1
+    face_attbs = face_data[:, 4].astype(np.int)
+
+    # Load the node coordinates.
+    nodes = np.loadtxt(path_node, skiprows = 1, usecols = (1, 2, 3))
+
+    # Check the spherical shells.
+    for k in range(discon_lists['n_discons']):
+
+        r_discon = model['r'][discon_lists['all'][k]]
+        k_discon = 4 + k
+        i = np.where(face_attbs == k_discon)[0]
+        j = face_nodes[i, :]
+        j = np.unique(j.flatten())
+        nodes_j = nodes[j, :]
+
+        r_j, lon_j, lat_j = XYZ_to_RLonLat(*nodes_j.T)  
+        lon_j = np.rad2deg(lon_j)
+        lat_j = np.rad2deg(lat_j)
+        
+        path_nodes_orig = os.path.join(subdir_out, 'discon_{:>1d}_pts.npy'.format(k))
+        nodes_orig = np.load(path_nodes_orig).T
+
+        r_orig, lon_orig, lat_orig = XYZ_to_RLonLat(*nodes_orig.T)  
+        lon_orig = np.rad2deg(lon_orig)
+        lat_orig = np.rad2deg(lat_orig)
+
+        from scipy.spatial import ConvexHull
+
+        hull_orig = ConvexHull(nodes_orig)
+        
+        n_new_nodes = len(nodes_j) - len(nodes_orig)
+        dist_to_hull_orig = dist_to_convex_hull(hull_orig, nodes_j[n_new_nodes:]) 
+
+        max_abs_dist_to_hull = np.max(np.abs(dist_to_hull_orig))
+
+        print('For discontinuity at radius {:>.6E} km, the maximum distance of points from original convex hull is: {:>.5e} km'.format(r_discon, max_abs_dist_to_hull))
+
+        #import matplotlib.pyplot as plt
+
+        #fig = plt.figure()
+        #ax  = plt.gca()
+
+        #ax.scatter(lon_orig, lat_orig, c = 'b', alpha = 0.5)
+        #ax.scatter(lon_j, lat_j, c = 'k', s = 3, alpha = 1.0)
+
+        #plt.show()
+
+        #sys.exit()
+
+        ##import matplotlib.pyplot as plt
+        ##fig = plt.figure()
+        ##ax = fig.add_subplot(111, projection = '3d')
+        ##
+        ##ax.scatter(*nodes_j.T)
+        ##ax.scatter(*a.T)
+
+        ##plt.show()
+
+        #sys.exit()
+
+        #if ellipticity_data is None:
+
+        #    radii_j = np.linalg.norm(nodes_j, axis = 1)
+
+        #else:
+
+        #    radii_j, _ = XYZ_to_REll(*nodes_j.T, r_ellipticity_profile, ellipticity_profile) 
+        #
+        #max_abs_error = np.max(np.abs(radii_j - r_discon))
+        #print('For discontinuity at radius {:>.6E} km, the maximum discrepancy in radius is {:>.6E} km'.format(r_discon, max_abs_error))
+
+        #import matplotlib.pyplot as plt
+        #nodes_x = nodes_j[np.where(radii_j < 1221.45)[0], :]
+        #fig = plt.figure()
+        #ax = fig.add_subplot(111, projection = '3d')
+        #
+        ##ax.scatter(*nodes_j.T)
+        #ax.scatter(*nodes_x.T, c = 'r', s = 20)
+
+        #plt.show()
+
+        #assert max_abs_error < 1.0E-8*r_discon, 'Large discrepancy between intended and actual discontinuity radius.'
+
+    ## Also check the top surface of the LLSVP.
+    #r_discon = model['r'][discon_lists['cmb']] + 400.0
+    #k_discon = 2
+    #i = np.where(face_attbs == k_discon)[0]
+    #j = face_nodes[i, :]
+    #j = np.unique(j.flatten())
+    #max_abs_error = np.max(np.abs(radii[j]) - r_discon)
+    
+    #print('For discontinuity at radius {:>.6E} km, the maximum discrepancy in radius is {:>.6E} km'.format(r_discon, max_abs_error))
+
+    #print(max_abs_error)
+    #assert max_abs_error < 1.0E-8*r_discon, 'Large discrepancy between intended and actual discontinuity radius.'
+
+    return
 
 def create_symlinks(subdir_out, name, order, file_node_dat, file_ele_dat, file_neigh_dat, file_mesh_header, path_list_only = False):
 
@@ -2294,6 +2066,35 @@ def calculate_gravity(subdir_out, dir_matlab, name,  order):
 
     return
 
+# Testing.
+def dist_to_convex_hull(hull, points):
+
+    from PyGEL3D import gel
+
+    # Construct PyGEL Manifold from the convex hull
+    m = gel.Manifold()
+    for s in hull.simplices:
+        m.add_face(hull.points[s])
+
+    dist = gel.MeshDistance(m)
+    res = []
+    for p in points:
+        # Get the distance to the point
+        # But don't trust its sign, because of possible
+        # wrong orientation of mesh face
+        d = dist.signed_distance(p)
+
+        # Correct the sign with ray inside test
+        if dist.ray_inside_test(p):
+            if d > 0:
+                d *= -1
+        else:
+            if d < 0:
+                d *= -1
+        res.append(d)
+
+    return np.array(res)
+
 # Main function. --------------------------------------------------------------
 def test_build_ellipsoidal():
 
@@ -2528,7 +2329,7 @@ def main():
         file_model = in_id.readline().split()[1]
         tet_max_vol = float(in_id.readline().split()[1])
         order = int(in_id.readline().split()[1])
-        is_ellipsoidal = bool(int(in_id.readline().split()[1]))
+        is_spherical = bool(int(in_id.readline().split()[1]))
         get_gravity = bool(int(in_id.readline().split()[1]))
 
     print('Read input file {:}'.format(path_input))
@@ -2537,19 +2338,18 @@ def main():
     print('Model file: {:}'.format(file_model))
     print('Maximum tetrahedron volume: {:>.3e} km3'.format(tet_max_vol))
     print('Finite-element order: {:>1d}'.format(order))
-    print('Model is spheroidal (not spherical): {:}'.format(is_ellipsoidal))
+    print('Model is spherical (not oblate): {:}'.format(is_spherical))
     print('Calculate gravity: {:}'.format(get_gravity))
 
-    sys.exit()
-
     # Load model information.
-    #file_model = 'prem_no_crust_03.0.txt'
-    #file_model = 'prem_no_80km_03.0.txt'
+    #ignore_midmantle_discons = True
+    ignore_midmantle_discons = False
     path_model = os.path.join(dir_input, file_model)
-    model, discon_lists = load_radial_model(path_model)
-    
+    model, discon_lists = load_radial_model(path_model,
+                            ignore_midmantle_discons = ignore_midmantle_discons)
+
     # Load ellipticity information.
-    if is_ellipsoidal:
+    if not is_spherical:
 
         path_ellipticity = os.path.join(dir_input, 'ellipticity_profile.txt')
         ellipticity_data = np.loadtxt(path_ellipticity)
@@ -2583,44 +2383,43 @@ def main():
     name = 'model'
 
     # Set the largest allowed mesh sizes (km) on each discontinuity.
-    #mesh_size_maxima = np.array([
-    #     500.0, # ICB.
-    #     500.0, # CMB.
-    #     370.0, # Base of transition zone (670).
-    #     180.0, # Top of transition zone (400).
-    #     140.0, # Base of lithosphere.
-    #      80.0, # Mid-lithosphere discontinuity.
-    #      80.0  # Surface.
-    #    ])
-    mesh_size_maxima = np.array([
-         500.0, # ICB.
-         500.0, # CMB.
-         270.0, # Base of transition zone (670).
-         180.0, # Top of transition zone (400).
-         220.0, # Base of lithosphere.
-         220.0  # Surface.
-        ])
+    if ignore_midmantle_discons:
+
+        mesh_size_maxima = np.array([
+             500.0, # ICB.
+             500.0, # CMB.
+             500.0  # Surface.
+            ])
+
+    else:
+
+        mesh_size_maxima = np.array([
+             500.0, # ICB.
+             500.0, # CMB.
+             270.0, # Base of transition zone (670).
+             180.0, # Top of transition zone (400).
+             220.0, # Base of lithosphere.
+             220.0  # Surface.
+            ])
+
+    assert len(mesh_size_maxima) == discon_lists['n_discons'], 'The list of mesh sizes (length: {:>d}) at discontinuities must be the same length as the list of discontinuities(length {:>d}).'.format(len(mesh_size_maxima), discon_lists['n_discons'])
 
     # Relax the mesh size limits (seems to give better results).
     mesh_size_maxima = 2.0*mesh_size_maxima
 
     # Make the .poly file, defining polygonal surfaces of regions.
-    path_poly = make_ellipsoidal_poly_file_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
+    path_poly = make_poly_file_with_llsvp_wrapper(dir_input, subdir_out, tet_max_vol, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
 
     # Make the mesh sizing file (.b.poly), defining mesh size throughout domain.
     tet_min_max_edge_length_ratio = 2.0
-    if ellipticity_data is None:
-
-        raise NotImplementedError('Mesh sizing function not implemented for spherical case with multiple mantle discontinuities.')
-        make_mesh_sizing_function_spherical(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, r_icb, r_cmb, r_srf, name)
-
-    else:
-        
-        make_mesh_sizing_function_ellipsoidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
+    make_mesh_sizing_function_spheroidal(subdir_out, tet_max_vol, tet_min_max_edge_length_ratio, model, discon_lists, name, ellipticity_data, mesh_size_maxima)
 
     # Tetrahedralise the .poly file, creating the mesh.
     tetrahedralise_poly_file(tet_max_vol, path_poly, subdir_out, name)
 
+    ## Check that the points on the discontinuities still conform to them.
+    #check_discon_radii(subdir_out, name, model, discon_lists, ellipticity_data = ellipticity_data)
+    
     # Assign parameters at the mesh points.
     assign_parameters(dir_input, subdir_out, name, order, model, discon_lists, ellipticity_data)
 

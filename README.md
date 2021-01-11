@@ -34,7 +34,7 @@ The first column gives the names of the variables to help the user remember them
 * `file_model` is the file name (not path) of the 1-D reference model file.
 * `tet_max_vol` is the maximum allowed size of the tetrahedral mesh element, in km<sup>3</sup> 
 * `pOrder` is the finite-element order of the elements (1 or 2, i.e. linear or quadratic)
-* `is_ellipsoidal` is 0 if the model is spherical, 1 if it is ellipsoidal.
+* `is_spherical` is 1 if the model is spherical, 0 if it is oblate spheroidal.
 * `use_gravity` is 1 if gravity should be calculated, 0 otherwise.
 
 The sequence of the lines in the input file should not be changed.
