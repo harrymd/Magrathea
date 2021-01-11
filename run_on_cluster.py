@@ -18,17 +18,24 @@ def main():
     path_cluster_input = os.path.join(dir_cluster_input, 'input_cluster.txt')
 
     #dir_scratch = '/scratch/06414/tg857131/Magrathea/'
-    dir_scratch = '/scratch/06414/tg857131/Magrathea/v5'
+    dir_scratch = '/scratch/06414/tg857131/Magrathea/v6'
 
     file_model = 'prem_no_80km_03.0.txt'
 
     # Load cluster input file.
     with open(path_cluster_input, 'r') as in_id:
 
-        tet_max_vol = float(in_id.readline())
-        order       = int(in_id.readline())
-        is_ellipsoidal = bool(int(in_id.readline().strip()))
-        get_gravity = bool(int(in_id.readline().strip()))
+        tet_max_vol = float(in_id.readline().split()[1])
+        order       = int(in_id.readline().split()[1])
+        is_spherical= bool(int(in_id.readline().split()[1]))
+        is_ellipsoidal = not(is_spherical)
+        get_gravity = bool(int(in_id.readline().split()[1]))
+
+    print('Read cluster input file {:}'.format(path_cluster_input))
+    print('Maximum tetrahedron volume: {:>.3e} km3'.format(tet_max_vol))
+    print('Finite-element order: {:>1d}'.format(order))
+    print('Model is spherical (not oblate): {:}'.format(is_spherical))
+    print('Calculate gravity: {:}'.format(get_gravity))
 
     if is_ellipsoidal:
 
@@ -44,7 +51,7 @@ def main():
 
     if max_ellipticity == 0.0:
 
-        ellipticity_str = 'inf'
+        ellipticity_str = 'sph'
 
     else:
 
@@ -69,7 +76,7 @@ def main():
         out_id.write('file_model {:}\n'.format(file_model))
         out_id.write('tet_max_vol {:>16.12e}\n'.format(tet_max_vol))
         out_id.write('pOrder {:>1d}\n'.format(order))
-        out_id.write('is_ellipsoidal {:>1d}\n'.format(int(is_ellipsoidal)))
+        out_id.write('is_spherical {:>1d}\n'.format(int(is_spherical)))
         out_id.write('get_gravity {:>1d}\n'.format(int(get_gravity)))
     
     #name_model = 'prem_noocean.txt'
@@ -86,7 +93,7 @@ def main():
 
         copyfile(path_source, path_dest) 
 
-    cmd_build_ellipsoidal = os.path.join(dir_work, 'build_ellipsoidal.py')    
+    cmd_build_ellipsoidal = os.path.join(dir_work, 'build_planet.py')    
     cmd = 'python3 {:} {:}'.format(cmd_build_ellipsoidal, path_input)
     print(cmd)
     os.system(cmd)
