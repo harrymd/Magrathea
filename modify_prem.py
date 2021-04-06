@@ -208,8 +208,8 @@ def main():
     out_arr = np.array([model_1['r'], model_1['rho'], model_1['v_p'], model_1['v_s']])
     name_out = 'prem_{:}_{:>04.1f}.txt'.format(crust_str, f1)
     path_out = os.path.join(dir_input, name_out) 
-    print('Saving to {:}'.format(path_out))
-    np.savetxt(path_out, out_arr.T) 
+    #print('Saving to {:}'.format(path_out))
+    #np.savetxt(path_out, out_arr.T) 
 
     keys = ['v_p', 'v_s', 'rho', 'q_ka', 'q_mu']
     i_discon = dict()

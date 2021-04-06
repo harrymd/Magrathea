@@ -1,6 +1,22 @@
 function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
     %% Calculates the gravity field of a planetary model.
     % Adapted from https://github.com/js1019/PlanetaryModels.
+    % Note from Anton:
+
+    %
+    % I finally got FMM working, but with a different library.  There is this newer library called FMM3D by the same group of people: https://fmm3d.readthedocs.io/en/latest/
+    % Apparently it is an improved version of FMMLIB3D, which I never got to work.
+    %
+    %    for example, in Jia's computePG script, here is what you would need to call FMM3D:
+    %eps = 1.0e-7;
+    %pg  = 2;
+    %pgt = 2;
+    %srcinfo.sources = 1.0e3 * P_tetra_center;
+    %srcinfo.charges = mass_tetra;
+    %targ                    = 1.0e3 * pnew';
+    %[FMM_out] = lfmm3d(eps,srcinfo,pg,targ,pgt);
+    %U_FMM  = G * FMM_out.pottarg;
+    %g_FMM  = G * FMM_out.gradtarg;
     
     %dir_model = '/Users/hrmd_work/Documents/research/stoneley/output/Magrathea/prem_0473.4_300/';
     %name_model = 'model';

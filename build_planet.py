@@ -2318,7 +2318,7 @@ def test_build_ellipsoidal2():
 def main():
 
     # Find the input file.
-    assert len(sys.argv) == 2, 'Usage: python3 build_ellipsoidal.py /path/to/input_file.txt'
+    assert len(sys.argv) == 2, 'Usage: python3 build_planet.py /path/to/input_file.txt'
     path_input = sys.argv[1]
 
     # Load input file.
@@ -2342,8 +2342,8 @@ def main():
     print('Calculate gravity: {:}'.format(get_gravity))
 
     # Load model information.
-    #ignore_midmantle_discons = True
-    ignore_midmantle_discons = False
+    ignore_midmantle_discons = True
+    #ignore_midmantle_discons = False
     path_model = os.path.join(dir_input, file_model)
     model, discon_lists = load_radial_model(path_model,
                             ignore_midmantle_discons = ignore_midmantle_discons)
