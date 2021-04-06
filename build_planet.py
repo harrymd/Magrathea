@@ -2342,8 +2342,8 @@ def main():
     print('Calculate gravity: {:}'.format(get_gravity))
 
     # Load model information.
-    #ignore_midmantle_discons = True
-    ignore_midmantle_discons = False
+    ignore_midmantle_discons = True
+    #ignore_midmantle_discons = False
     path_model = os.path.join(dir_input, file_model)
     model, discon_lists = load_radial_model(path_model,
                             ignore_midmantle_discons = ignore_midmantle_discons)

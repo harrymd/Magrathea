@@ -18,7 +18,7 @@ def main():
     path_cluster_input = os.path.join(dir_cluster_input, 'input_cluster.txt')
 
     #dir_scratch = '/scratch/06414/tg857131/Magrathea/'
-    dir_scratch = '/scratch/06414/tg857131/Magrathea/v6'
+    dir_scratch = '/scratch/06414/tg857131/Magrathea/v7'
 
     file_model = 'prem_no_80km_03.0.txt'
 
