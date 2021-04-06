@@ -2033,7 +2033,7 @@ def save_model_to_vtk(path_vtk, pts, tets, links, tet_labels, v_p, v_s, rho, ord
 
     return
 
-def calculate_gravity(subdir_out, dir_matlab, name,  order):
+def calculate_gravity(subdir_out, dir_matlab, name,  order, is_spherical):
 
     path_list = create_symlinks_gravity(subdir_out, name, order, path_list_only = True)
     files_exist = all([os.path.exists(path_) for path_ in path_list])
@@ -2043,6 +2043,14 @@ def calculate_gravity(subdir_out, dir_matlab, name,  order):
         print('All gravity files exist, skipping.')
         return
 
+    if is_spherical:
+
+        include_centripetal_str = '0'
+
+    else:
+
+        include_centripetal_str = '1'
+
     # Record starting directory.
     start_dir = os.getcwd()
 
@@ -2051,7 +2059,7 @@ def calculate_gravity(subdir_out, dir_matlab, name,  order):
         os.chdir(dir_matlab)
         for anomaly_str in ['without_anomaly', 'with_anomaly']:
 
-            command = 'matlab -nojvm -r "try; run_gravity(\'{:}\', \'model\', {:>1d}, \'{:}\'); catch e; fprintf(1, e.message); exit; end; exit"'.format(subdir_out, order, anomaly_str)
+            command = 'matlab -nojvm -r "try; run_gravity(\'{:}\', \'model\', {:>1d}, \'{:}\', {:}); catch e; fprintf(1, e.message); exit; end; exit"'.format(subdir_out, order, anomaly_str, include_centripetal_str)
             print(command)
             os.system(command)
 
@@ -2427,7 +2435,7 @@ def main():
     if get_gravity:
 
         dir_matlab = os.path.join('.', 'matlab')
-        calculate_gravity(subdir_out, dir_matlab, name, order)
+        calculate_gravity(subdir_out, dir_matlab, name, order, is_spherical)
 
     return
 

@@ -1,4 +1,4 @@
-function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
+function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str, include_centripetal)
     %% Calculates the gravity field of a planetary model.
     % Adapted from https://github.com/js1019/PlanetaryModels.
     % Note from Anton:
@@ -143,6 +143,29 @@ function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
     source(2,:) = ones(1,4)*yd/4;
     source(3,:) = ones(1,4)*zd/4;
 
+    % Run rotation (if required).
+    if include_centripetal == 1
+
+        % construct the rotation and centrifugal force
+        
+        % set a few parameters
+        % Mars
+        % period = 24.6229; %24*3600+37*60+22; hours
+        % Earth
+        period = 23.9345 
+        aglar = 2*pi/(period*3600); 
+        Omega = [0 0 1]*aglar;
+        
+        factor = 1e3; % km 
+        
+        Ome0 = ones(size(pnew0,1),1)*Omega;
+        rot0 = cross(Ome0,pnew0); rot1 = rot0'*factor; 
+        fce0 = - cross(Ome0,rot0); fce1 = fce0'*factor; 
+        
+        end
+
+    end
+
     ifcharge = 1; 
     charge0 = J(1,:).*sum(Mass*rho0)/pOrder^3;
     charge = reshape(ones(pOrder^3,1)*charge0,1,Nenew);
@@ -164,7 +187,9 @@ function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
 
     ifpottarg = 1;
     iffldtarg = 1;
-     
+        
+    % Note: Could update this with code from PlanetaryModels which breaks
+    % the calculation into smaller pieces. 
     if (nsource+ntarget < 20e6)
 
         % Use FMM.
@@ -204,16 +229,22 @@ function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str)
 
     saveFMM = true;
     if saveFMM % FMM
-    % save the data
-    fprintf('Writing to %s\n', fgfld);
-    fid=fopen(fgfld,'w');
-    fwrite(fid,gfld0',accry);
-    fclose(fid);
-    %else % semi-analytic
-    %% save the data
-    %fid=fopen(fgfld,'w');
-    %fwrite(fid,gfld1',accry); % first 3 directions; pNp, ntet
-    %fclose(fid);
+
+        % save the data
+        fprintf('Writing to %s\n', fgfld);
+        fid=fopen(fgfld,'w');
+
+        if include_centripetal
+
+            fwrite(fid, gfld0' + fce1, accry);
+
+        else
+
+            fwrite(fid, gfld0', accry);
+
+        end
+        fclose(fid);
+
     end 
 
     saveVTK = 0;
