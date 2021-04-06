@@ -1,4 +1,4 @@
-tet_max_vol 3.0E7
+tet_max_vol 1.0E8 
 pOrder 2 
 is_spherical 0 
 get_gravity 1 

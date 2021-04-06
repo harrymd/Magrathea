@@ -162,8 +162,6 @@ function [] = run_gravity(dir_model, name_model, pOrder, anomaly_str, include_ce
         rot0 = cross(Ome0,pnew0); rot1 = rot0'*factor; 
         fce0 = - cross(Ome0,rot0); fce1 = fce0'*factor; 
         
-        end
-
     end
 
     ifcharge = 1; 
