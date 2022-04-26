@@ -47,5 +47,5 @@ The sequence of the lines in the input file should not be changed.
 Note `-l` flag for symlinks
 
 ```
-rsync -rvhl tg857131@stampede2.tacc.utexas.edu:/scratch/06414/tg857131/Magrathea/ /Volumes/stoneley5TB/all/Magrathea/v4
+rsync -rvhl user@stampede2.tacc.utexas.edu:/scratch/06414/user/Magrathea/ /Volumes/stoneley5TB/all/Magrathea/v4
 ```
